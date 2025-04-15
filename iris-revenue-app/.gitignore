@@ -1,0 +1,11 @@
+node_modules/
+.env*
+*.db
+*.db-journal
+
+# Frontend build output
+frontend/dist/
+frontend/.vite/
+
+# Backend build output
+backend/dist/
