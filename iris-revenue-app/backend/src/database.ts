@@ -8,10 +8,10 @@ dotenv.config();
 // Use verbose mode for more detailed error messages during development
 const sqlite = sqlite3.verbose();
 
-// --- REVERT TO USING data/ DIRECTORY --- 
-const defaultDbFilename = 'iris_data.db'; 
+// --- REVERT TO USING data/ DIRECTORY ---
+const defaultDbFilename = 'iris_data.db';
 // Define the data directory relative to the current file's directory (__dirname)
-const dataDir = path.resolve(__dirname, '..', 'data'); 
+const dataDir = path.resolve(__dirname, '..', 'data');
 const dbFilename = process.env.DATABASE_PATH || defaultDbFilename;
 // Use absolute path for the database to ensure consistency
 const absoluteDbPath = path.resolve(dataDir, dbFilename);
@@ -26,7 +26,7 @@ try {
     console.error(`Error creating data directory at ${dataDir}:`, err);
 }
 console.log(`[Database Path] Using database file at: ${absoluteDbPath}`);
-// --- END REVERT --- 
+// --- END REVERT ---
 
 // --- Singleton Pattern for DB Connection ---
 let db: sqlite3.Database | null = null;
@@ -52,13 +52,13 @@ function createDbConnection(): sqlite3.Database {
 export function getDbConnection(): sqlite3.Database {
     if (!db) {
         console.log('[DB Connection] Creating new database connection instance...');
-        
+
         // Create data directory if it doesn't exist
         if (!fs.existsSync(dataDir)) {
             fs.mkdirSync(dataDir, { recursive: true });
             console.log(`[DB Connection] Created data directory: ${dataDir}`);
         }
-        
+
         // Create and configure the database connection
         db = new sqlite.Database(absoluteDbPath, (err) => {
             if (err) {
@@ -129,7 +129,7 @@ function runSerial(dbInstance: sqlite3.Database, sqlStatements: string[]): Promi
                                 if (rollbackErr) {
                                     console.error('Error rolling back transaction', rollbackErr.message);
                                     return reject(rollbackErr);
-                                } 
+                                }
                                 return reject(runErr); // Reject with the original error
                             });
                         }
@@ -155,7 +155,7 @@ export async function initializeDatabase(providedDb?: sqlite3.Database): Promise
     const db = providedDb || getDbConnection();
     console.log(`SQLite database connected at ${absoluteDbPath}`);
 
-    // Disable foreign key enforcement by default 
+    // Disable foreign key enforcement by default
     await new Promise<void>((resolve, reject) => {
         db.run('PRAGMA foreign_keys = OFF;', (err) => {
             if (err) {
@@ -231,11 +231,11 @@ export async function initializeDatabase(providedDb?: sqlite3.Database): Promise
             product_name TEXT,
             offerprojectbase_id INTEGER,
             offerprojectbase_type TEXT,
-            discount TEXT, 
+            discount TEXT,
             buyingprice TEXT,
-            description TEXT, 
-            createdon_date TEXT, 
-            createdon_timezone TEXT, 
+            description TEXT,
+            createdon_date TEXT,
+            createdon_timezone TEXT,
             searchname TEXT,
             unit TEXT,
             invoicebasis_id INTEGER,
@@ -250,7 +250,8 @@ export async function initializeDatabase(providedDb?: sqlite3.Database): Promise
             amount TEXT,
             amountwritten TEXT,
             date TEXT,
-            offerprojectline_id INTEGER,
+            description TEXT,
+            offer_project_line_id INTEGER,
             offerprojectbase_id INTEGER,
             offerprojectbase_type TEXT,
             employee_id INTEGER,

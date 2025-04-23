@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { 
-    syncAllData, 
-    syncProjectsOnly, 
-    syncOffersOnly, 
-    syncHoursForYear, 
+import {
+    syncAllData,
+    syncProjectsOnly,
+    syncOffersOnly,
+    syncHoursForYear,
     syncRecentHours,
     SyncResponse
 } from '../services/api';
@@ -28,9 +28,9 @@ const SyncButton: React.FC<SyncButtonProps> = ({
     children,
     variant = 'default'
 }) => (
-    <Button 
-        onClick={onClick} 
-        disabled={disabled || loading} 
+    <Button
+        onClick={onClick}
+        disabled={disabled || loading}
         variant={variant}
         className="w-full text-xs h-9"
     >
@@ -40,7 +40,7 @@ const SyncButton: React.FC<SyncButtonProps> = ({
 
 const SyncPage: React.FC<SyncPageProps> = ({ onReturn }) => {
     console.log('[SyncPage] Component geladen'); // Debug log
-    
+
     // State for each sync operation's status
     const [syncAllStatusLoading, setSyncAllStatusLoading] = useState(false);
     const [syncAllStatusSuccess, setSyncAllStatusSuccess] = useState(false);
@@ -76,7 +76,7 @@ const SyncPage: React.FC<SyncPageProps> = ({ onReturn }) => {
 
     // Handles sync response and updates state accordingly
     const handleSyncResponse = (
-        response: SyncResponse, 
+        response: SyncResponse,
         setLoading: React.Dispatch<React.SetStateAction<boolean>>,
         setSuccess: React.Dispatch<React.SetStateAction<boolean>>,
         setError: React.Dispatch<React.SetStateAction<string | null>>
@@ -92,20 +92,20 @@ const SyncPage: React.FC<SyncPageProps> = ({ onReturn }) => {
     };
 
     // Sync for a specific year
-    const handleSyncHoursForYear = async (year: number) => {
+    const handleSyncHoursForYear = async (year: number, forceDeleteAll: boolean = false) => {
         setSyncHoursYears(prev => ({
             ...prev,
             [year]: { loading: true, success: false, error: null }
         }));
 
         try {
-            const response = await syncHoursForYear(year);
+            const response = await syncHoursForYear(year, forceDeleteAll);
             setSyncHoursYears(prev => ({
                 ...prev,
-                [year]: { 
-                    loading: false, 
+                [year]: {
+                    loading: false,
                     success: response.success || false,
-                    error: response.success ? null : (response.error || 'Onbekende fout') 
+                    error: response.success ? null : (response.error || 'Onbekende fout')
                 }
             }));
         } catch {
@@ -126,10 +126,10 @@ const SyncPage: React.FC<SyncPageProps> = ({ onReturn }) => {
             const response = await syncAllData();
             handleSyncResponse(response, setSyncAllStatusLoading, setSyncAllStatusSuccess, setSyncAllStatusError);
         } catch {
-            handleSyncResponse({ 
-                success: false, 
-                error: 'Netwerk fout', 
-                message: 'Synchronisatie mislukt door netwerk fout' 
+            handleSyncResponse({
+                success: false,
+                error: 'Netwerk fout',
+                message: 'Synchronisatie mislukt door netwerk fout'
             }, setSyncAllStatusLoading, setSyncAllStatusSuccess, setSyncAllStatusError);
         }
     };
@@ -143,10 +143,10 @@ const SyncPage: React.FC<SyncPageProps> = ({ onReturn }) => {
             const response = await syncProjectsOnly();
             handleSyncResponse(response, setSyncProjectsStatusLoading, setSyncProjectsStatusSuccess, setSyncProjectsStatusError);
         } catch {
-            handleSyncResponse({ 
-                success: false, 
-                error: 'Netwerk fout', 
-                message: 'Synchronisatie mislukt door netwerk fout' 
+            handleSyncResponse({
+                success: false,
+                error: 'Netwerk fout',
+                message: 'Synchronisatie mislukt door netwerk fout'
             }, setSyncProjectsStatusLoading, setSyncProjectsStatusSuccess, setSyncProjectsStatusError);
         }
     };
@@ -160,10 +160,10 @@ const SyncPage: React.FC<SyncPageProps> = ({ onReturn }) => {
             const response = await syncOffersOnly();
             handleSyncResponse(response, setSyncOffersStatusLoading, setSyncOffersStatusSuccess, setSyncOffersStatusError);
         } catch {
-            handleSyncResponse({ 
-                success: false, 
-                error: 'Netwerk fout', 
-                message: 'Synchronisatie mislukt door netwerk fout' 
+            handleSyncResponse({
+                success: false,
+                error: 'Netwerk fout',
+                message: 'Synchronisatie mislukt door netwerk fout'
             }, setSyncOffersStatusLoading, setSyncOffersStatusSuccess, setSyncOffersStatusError);
         }
     };
@@ -177,10 +177,10 @@ const SyncPage: React.FC<SyncPageProps> = ({ onReturn }) => {
             const response = await syncRecentHours();
             handleSyncResponse(response, setSyncRecentHoursStatusLoading, setSyncRecentHoursStatusSuccess, setSyncRecentHoursStatusError);
         } catch {
-            handleSyncResponse({ 
-                success: false, 
-                error: 'Netwerk fout', 
-                message: 'Synchronisatie mislukt door netwerk fout' 
+            handleSyncResponse({
+                success: false,
+                error: 'Netwerk fout',
+                message: 'Synchronisatie mislukt door netwerk fout'
             }, setSyncRecentHoursStatusLoading, setSyncRecentHoursStatusSuccess, setSyncRecentHoursStatusError);
         }
     };
@@ -203,14 +203,14 @@ const SyncPage: React.FC<SyncPageProps> = ({ onReturn }) => {
                     Terug naar Omzet
                 </Button>
             </div>
-            
+
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {/* Volledige Synchronisatie */}
                 <div className="bg-white p-4 rounded-md shadow-sm border border-gray-200">
                     <h2 className="text-base font-medium mb-2">Volledige Synchronisatie</h2>
                     <p className="text-xs text-gray-500 mb-3">Synchroniseert alle projecten, offertes en uren. Dit kan lang duren.</p>
                     <div className="flex items-center gap-2">
-                        <SyncButton 
+                        <SyncButton
                             onClick={handleSyncAll}
                             disabled={syncAllStatusLoading || syncProjectsStatusLoading || syncOffersStatusLoading}
                             loading={syncAllStatusLoading}
@@ -230,7 +230,7 @@ const SyncPage: React.FC<SyncPageProps> = ({ onReturn }) => {
                     <h2 className="text-base font-medium mb-2">Projecten & Offertes</h2>
                     <div className="grid gap-2">
                         <div className="flex items-center gap-2">
-                            <SyncButton 
+                            <SyncButton
                                 onClick={handleSyncProjects}
                                 disabled={syncAllStatusLoading || syncProjectsStatusLoading}
                                 loading={syncProjectsStatusLoading}
@@ -239,9 +239,9 @@ const SyncPage: React.FC<SyncPageProps> = ({ onReturn }) => {
                             </SyncButton>
                             {renderStatusIcon(syncProjectsStatusSuccess, syncProjectsStatusError)}
                         </div>
-                        
+
                         <div className="flex items-center gap-2">
-                            <SyncButton 
+                            <SyncButton
                                 onClick={handleSyncOffers}
                                 disabled={syncAllStatusLoading || syncOffersStatusLoading}
                                 loading={syncOffersStatusLoading}
@@ -258,7 +258,7 @@ const SyncPage: React.FC<SyncPageProps> = ({ onReturn }) => {
                     <h2 className="text-base font-medium mb-2">Recente Uren</h2>
                     <p className="text-xs text-gray-500 mb-3">Alleen uren uit de afgelopen 3 maanden synchroniseren.</p>
                     <div className="flex items-center gap-2">
-                        <SyncButton 
+                        <SyncButton
                             onClick={handleSyncRecentHours}
                             disabled={syncAllStatusLoading || syncRecentHoursStatusLoading}
                             loading={syncRecentHoursStatusLoading}
@@ -274,15 +274,30 @@ const SyncPage: React.FC<SyncPageProps> = ({ onReturn }) => {
                     <h2 className="text-base font-medium mb-2">Uren per Jaar</h2>
                     <div className="grid gap-2">
                         {Object.entries(syncHoursYears).map(([year, status]) => (
-                            <div key={year} className="flex items-center gap-2">
-                                <SyncButton 
-                                    onClick={() => handleSyncHoursForYear(parseInt(year))}
-                                    disabled={syncAllStatusLoading || status.loading}
-                                    loading={status.loading}
-                                >
-                                    Uren {year}
-                                </SyncButton>
-                                {renderStatusIcon(status.success, status.error)}
+                            <div key={year} className="flex flex-col gap-2">
+                                <div className="flex items-center gap-2">
+                                    <SyncButton
+                                        onClick={() => handleSyncHoursForYear(parseInt(year))}
+                                        disabled={syncAllStatusLoading || status.loading}
+                                        loading={status.loading}
+                                    >
+                                        Uren {year}
+                                    </SyncButton>
+                                    {renderStatusIcon(status.success, status.error)}
+                                </div>
+                                {parseInt(year) === 2025 && (
+                                    <div className="flex items-center gap-2">
+                                        <SyncButton
+                                            onClick={() => handleSyncHoursForYear(parseInt(year), true)}
+                                            disabled={syncAllStatusLoading || status.loading}
+                                            loading={status.loading}
+                                            variant="destructive"
+                                        >
+                                            Uren {year} (FORCE)
+                                        </SyncButton>
+                                        <span className="text-xs text-gray-500">⚠️ Verwijdert alle uren</span>
+                                    </div>
+                                )}
                             </div>
                         ))}
                     </div>
@@ -292,4 +307,4 @@ const SyncPage: React.FC<SyncPageProps> = ({ onReturn }) => {
     );
 };
 
-export default SyncPage; 
+export default SyncPage;

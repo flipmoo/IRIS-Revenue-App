@@ -15,7 +15,8 @@ import {
     syncOffersOnly,
     syncRecentHours,
     syncHoursOnlyForYear,
-    syncOfferProjectLines
+    syncOfferProjectLines,
+    syncProjectLines
 } from './services/syncService';
 // Import KPI service functions
 import { getKPIData, updateManualKPIValue } from './services/kpiService';
@@ -35,12 +36,12 @@ const port = process.env.BACKEND_PORT || 3005;
 // --- Setup Express App First ---
 console.log('[Server Init] Setting up Express app and middleware...');
 // Middleware
-app.use(cors({ origin: 'http://localhost:5173' })); 
+app.use(cors({ origin: 'http://localhost:5173' }));
 app.use(express.json());
 
 // Remove the simple logger
 /*
-app.use((req: Request, res: Response, next: Function) => { 
+app.use((req: Request, res: Response, next: Function) => {
     process.stdout.write(`[Server Running - stdout] Received request: ${req.method} ${req.url}\n`);
     next();
 });
@@ -79,7 +80,7 @@ app.post("/api/sync", (req: Request, res: Response) => {
                   console.error("[API Sync] Failed to re-enable foreign keys:", fkError);
               });
           });
-      
+
       res.status(202).json({ message: "Synchronization process started in the background." });
   } catch (error: any) {
       console.error("[API Sync] Error initiating sync:", error);
@@ -99,7 +100,7 @@ app.get("/api/revenue", async (req: Request, res: Response) => {
         year = currentYear; // Default to current year (dynamically determined)
         console.log(`[API Revenue] Year parameter missing or invalid, defaulting to ${year}`);
     }
-    
+
     console.log(`[API Revenue] Received request for revenue data for year: ${year}`);
 
     try {
@@ -114,27 +115,31 @@ app.get("/api/revenue", async (req: Request, res: Response) => {
 // Define handler separately with explicit type RequestHandler
 // Make the handler async to await project sync
 const syncHoursOnlyHandler = async (req: Request, res: Response) => {
-    // Check for year in both query parameters and request body
-    const yearParam = req.query.year as string || (req.body && req.body.year ? req.body.year.toString() : null);
+    // Check for year in URL params, query parameters, and request body
+    const yearParam = req.params.year as string || req.query.year as string || (req.body && req.body.year ? req.body.year.toString() : null);
     let year: number;
 
     if (yearParam && /^\d{4}$/.test(yearParam.toString())) {
         year = parseInt(yearParam.toString(), 10);
     } else {
-        res.status(400).json({ message: "Missing or invalid 'year' parameter. Provide it either as a query parameter (?year=2025) or in the request body." });
-        return; 
+        res.status(400).json({ message: "Missing or invalid 'year' parameter. Provide it either in the URL (/api/sync/hours/2025), as a query parameter (?year=2025), or in the request body." });
+        return;
     }
 
-    console.log(`[API Sync Hours Only Handler] START for year: ${year}`);
-    
+    // Check for forceDeleteAll parameter
+    const forceDeleteAllParam = req.query.forceDeleteAll as string || (req.body && req.body.forceDeleteAll ? req.body.forceDeleteAll.toString() : null);
+    const forceDeleteAll = forceDeleteAllParam === 'true' || forceDeleteAllParam === '1';
+
+    console.log(`[API Sync Hours Only Handler] START for year: ${year}${forceDeleteAll ? ' (FORCE DELETE ALL)' : ''}`);
+
     try {
         // Belangrijk: Bij de start van de handler foreign keys uitschakelen
         console.log(`[API Sync Hours Only Handler] Disabling foreign keys PERMANENTLY...`);
         await disableForeignKeys();
-        
-        // Call syncHoursOnlyForYear with year
-        console.log(`[API Sync Hours Only Handler] Calling syncHoursOnlyForYear for ${year}...`);
-        const result = await syncHoursOnlyForYear(String(year));
+
+        // Call syncHoursOnlyForYear with year and forceDeleteAll
+        console.log(`[API Sync Hours Only Handler] Calling syncHoursOnlyForYear for ${year}${forceDeleteAll ? ' with FORCE DELETE ALL' : ''}...`);
+        const result = await syncHoursOnlyForYear(String(year), true, forceDeleteAll);
         console.log(`[API Sync Hours Only Handler] Finished syncHoursOnlyForYear for ${year}.`);
         console.log(`[API Sync Hours Only Handler] Result:`, result);
 
@@ -150,15 +155,15 @@ const syncHoursOnlyHandler = async (req: Request, res: Response) => {
 
     } catch (error: any) {
         console.error(`[API Sync Hours Only Handler] ERROR:`, error);
-        
+
         // Foreign keys blijven altijd uitgeschakeld, ook bij errors
         console.log(`[API Sync Hours Only Handler] Foreign keys remain PERMANENTLY disabled even after error.`);
-        
+
         if (!res.headersSent) {
-            res.status(500).json({ 
+            res.status(500).json({
                 success: false,
-                message: "Hours synchronization failed", 
-                error: error.message 
+                message: "Hours synchronization failed",
+                error: error.message
             });
             console.log(`[API Sync Hours Only Handler] Sent 500 response.`);
         }
@@ -167,7 +172,10 @@ const syncHoursOnlyHandler = async (req: Request, res: Response) => {
 };
 
 // Use the defined handler
-app.post("/api/sync/hours-only", syncHoursOnlyHandler); 
+app.post("/api/sync/hours-only", syncHoursOnlyHandler);
+
+// Add endpoint for syncing hours for a specific year
+app.post("/api/sync/hours/:year", syncHoursOnlyHandler);
 
 // Add new specialized sync endpoints
 app.post("/api/sync/projects-only", (req: Request, res: Response) => {
@@ -175,9 +183,15 @@ app.post("/api/sync/projects-only", (req: Request, res: Response) => {
   try {
       console.log("[API Sync] Starting projects-only sync in background...");
       syncProjectsOnly()
-          .then(() => console.log("[API Sync] Projects-only sync completed successfully"))
-          .catch(error => console.error("[API Sync] Projects-only sync failed:", error));
-      
+          .then(() => {
+              console.log("[API Sync] Projects-only sync completed successfully");
+              // Nu ook de projectregels synchroniseren
+              console.log("[API Sync] Starting project lines sync in background...");
+              return syncProjectLines();
+          })
+          .then(() => console.log("[API Sync] Project lines sync completed successfully"))
+          .catch(error => console.error("[API Sync] Projects-only or project lines sync failed:", error));
+
       res.status(202).json({ message: "Projects-only synchronization started in background" });
   } catch (error: any) {
       console.error("[API Sync] Error initiating projects-only sync:", error);
@@ -190,9 +204,15 @@ app.post("/api/sync/offers-only", (req: Request, res: Response) => {
   try {
       console.log("[API Sync] Starting offers-only sync in background...");
       syncOffersOnly()
-          .then(() => console.log("[API Sync] Offers-only sync completed successfully"))
-          .catch(error => console.error("[API Sync] Offers-only sync failed:", error));
-      
+          .then(() => {
+              console.log("[API Sync] Offers-only sync completed successfully");
+              // Nu ook de offerteregels synchroniseren
+              console.log("[API Sync] Starting offer lines sync in background...");
+              return syncOfferProjectLines();
+          })
+          .then(() => console.log("[API Sync] Offer lines sync completed successfully"))
+          .catch(error => console.error("[API Sync] Offers-only or offer lines sync failed:", error));
+
       res.status(202).json({ message: "Offers-only synchronization started in background" });
   } catch (error: any) {
       console.error("[API Sync] Error initiating offers-only sync:", error);
@@ -200,18 +220,41 @@ app.post("/api/sync/offers-only", (req: Request, res: Response) => {
   }
 });
 
-app.post("/api/sync/recent-hours", (req: Request, res: Response) => {
+app.post("/api/sync/recent-hours", async (req: Request, res: Response) => {
   console.log("[API Sync] Received request to sync recent hours (last 3 months)");
   try {
-      console.log("[API Sync] Starting recent-hours sync in background...");
-      syncRecentHours()
-          .then(() => console.log("[API Sync] Recent-hours sync completed successfully"))
-          .catch(error => console.error("[API Sync] Recent-hours sync failed:", error));
-      
-      res.status(202).json({ message: "Recent-hours synchronization started in background" });
+      console.log("[API Sync] Starting recent-hours sync...");
+
+      // Disable foreign keys to avoid conflicts
+      console.log("[API Sync] Disabling foreign keys for recent-hours sync...");
+      await disableForeignKeys();
+
+      // Execute the sync function and wait for it to complete
+      console.log("[API Sync] Calling syncRecentHours function...");
+      const result = await syncRecentHours();
+
+      if (result.success) {
+          console.log(`[API Sync] Recent-hours sync completed successfully. Saved ${result.hoursSaved} hours.`);
+          res.status(200).json({
+              success: true,
+              message: result.message,
+              hoursSaved: result.hoursSaved
+          });
+      } else {
+          console.error("[API Sync] Recent-hours sync failed:", result.error);
+          res.status(500).json({
+              success: false,
+              message: result.message,
+              error: result.error
+          });
+      }
   } catch (error: any) {
-      console.error("[API Sync] Error initiating recent-hours sync:", error);
-      res.status(500).json({ message: "Failed to initiate recent-hours sync", error: error.message });
+      console.error("[API Sync] Error during recent-hours sync:", error);
+      res.status(500).json({
+          success: false,
+          message: "Failed to synchronize recent hours",
+          error: error.message
+      });
   }
 });
 
@@ -286,7 +329,7 @@ app.get("/api/manual/project-consumption/:projectId/:targetYear", (req: Request,
             res.status(200).json(row);
         } else {
             console.log(`[API Manual] No project consumption data found for project ${projectId}, year ${targetYear}.`);
-            res.status(200).json({ project_id: projectId, target_year: targetYear, consumption_amount: '0', view_mode: 'revenue', last_updated: null }); 
+            res.status(200).json({ project_id: projectId, target_year: targetYear, consumption_amount: '0', view_mode: 'revenue', last_updated: null });
         }
     });
 });
@@ -352,7 +395,7 @@ app.get("/api/manual/monthly-targets/:targetYear", (req: Request, res: Response)
             UNION ALL
             SELECT m + 1 FROM MonthSeries WHERE m < 12
         )
-        SELECT 
+        SELECT
             ms.m as month,
             ? as target_year, -- Inject the requested year
             COALESCE(mmt.target_amount, '0') as target_amount,
@@ -434,7 +477,7 @@ app.get("/api/manual/definite-revenue/:targetYear", (req: Request, res: Response
             UNION ALL
             SELECT m + 1 FROM MonthSeries WHERE m < 12
         )
-        SELECT 
+        SELECT
             ms.m as month,
             ? as target_year, -- Inject the requested year
             COALESCE(mmdr.definite_revenue, '0') as definite_revenue,
@@ -457,10 +500,240 @@ app.get("/api/manual/definite-revenue/:targetYear", (req: Request, res: Response
 
 // --- End Routes for Manual Data Input ---
 
+// Debug endpoint to count hours in Gripp for a specific year
+app.get("/api/debug/gripp-hours-count/:year", async (req: Request, res: Response) => {
+    const year = req.params.year;
+    console.log(`[API Debug] Received request to count hours in Gripp for year ${year}`);
+
+    try {
+        const { getHours } = require('./services/grippApi');
+        console.log(`[API Debug] Calling getHours for year ${year}...`);
+        const hours = await getHours(year);
+        console.log(`[API Debug] Fetched ${hours.length} hours from Gripp for year ${year}`);
+
+        // Calculate total hours
+        let totalHours = 0;
+        for (const hour of hours) {
+            const amount = parseFloat(hour.amount || '0') || 0;
+            totalHours += amount;
+        }
+
+        res.status(200).json({
+            year,
+            recordCount: hours.length,
+            totalHours: totalHours,
+            message: `Successfully fetched ${hours.length} hours (${totalHours} total hours) from Gripp for year ${year}`
+        });
+    } catch (error: any) {
+        console.error(`[API Debug] Error counting hours in Gripp for year ${year}:`, error);
+        res.status(500).json({
+            year,
+            error: error.message || 'Unknown error',
+            message: `Failed to count hours in Gripp for year ${year}`
+        });
+    }
+});
+
+// Debug endpoint to get raw hours data from Gripp for a specific year
+app.get("/api/debug/gripp-hours-raw/:year", async (req: Request, res: Response) => {
+    const year = req.params.year;
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 100; // Default limit to 100 records
+    console.log(`[API Debug] Received request to get raw hours from Gripp for year ${year} with limit ${limit}`);
+
+    try {
+        const { getHours } = require('./services/grippApi');
+        console.log(`[API Debug] Calling getHours for year ${year}...`);
+        const hours = await getHours(year);
+        console.log(`[API Debug] Fetched ${hours.length} hours from Gripp for year ${year}`);
+
+        // Group hours by month
+        const hoursByMonth: Record<string, any[]> = {};
+        for (const hour of hours) {
+            let dateString: string = '';
+            if (typeof hour.date === 'string') {
+                dateString = hour.date;
+            } else if (typeof hour.date === 'object' && hour.date?.date) {
+                dateString = hour.date.date;
+            }
+
+            if (dateString) {
+                const dateParts = dateString.split('-');
+                if (dateParts.length >= 2) {
+                    const month = dateParts[1];
+                    if (!hoursByMonth[month]) {
+                        hoursByMonth[month] = [];
+                    }
+                    hoursByMonth[month].push(hour);
+                }
+            }
+        }
+
+        // Calculate total hours per month
+        const monthlyTotals: Record<string, number> = {};
+        for (const month in hoursByMonth) {
+            let total = 0;
+            for (const hour of hoursByMonth[month]) {
+                const amount = parseFloat(hour.amount || '0') || 0;
+                total += amount;
+            }
+            monthlyTotals[month] = total;
+        }
+
+        // Return limited data to avoid overwhelming the response
+        res.status(200).json({
+            year,
+            recordCount: hours.length,
+            monthlyTotals,
+            monthlyRecordCounts: Object.keys(hoursByMonth).reduce((acc, month) => {
+                acc[month] = hoursByMonth[month].length;
+                return acc;
+            }, {} as Record<string, number>),
+            sampleData: hours.slice(0, limit) // Return only the first 'limit' records
+        });
+    } catch (error: any) {
+        console.error(`[API Debug] Error getting raw hours from Gripp for year ${year}:`, error);
+        res.status(500).json({
+            year,
+            error: error.message || 'Unknown error',
+            message: `Failed to get raw hours from Gripp for year ${year}`
+        });
+    }
+});
+
+// Debug endpoint to compare hours in Gripp with hours in database
+app.get("/api/debug/compare-hours/:year", async (req: Request, res: Response) => {
+    const year = req.params.year;
+    const month = req.query.month as string || null;
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 20; // Default limit to 20 records
+    console.log(`[API Debug] Received request to compare hours for year ${year}${month ? `, month ${month}` : ''}`);
+
+    try {
+        // Get hours from Gripp
+        const { getHours } = require('./services/grippApi');
+        console.log(`[API Debug] Calling getHours for year ${year}...`);
+        const grippHours = await getHours(year);
+        console.log(`[API Debug] Fetched ${grippHours.length} hours from Gripp for year ${year}`);
+
+        // Filter by month if specified
+        let filteredGrippHours = grippHours;
+        if (month) {
+            filteredGrippHours = grippHours.filter((hour: any) => {
+                let dateString: string = '';
+                if (typeof hour.date === 'string') {
+                    dateString = hour.date;
+                } else if (typeof hour.date === 'object' && hour.date?.date) {
+                    dateString = hour.date.date;
+                }
+
+                if (dateString) {
+                    const dateParts = dateString.split('-');
+                    if (dateParts.length >= 2) {
+                        return dateParts[1] === month;
+                    }
+                }
+                return false;
+            });
+            console.log(`[API Debug] Filtered to ${filteredGrippHours.length} hours for month ${month}`);
+        }
+
+        // Get hours from database
+        const db = getDbConnection();
+        const dbHours: any[] = await new Promise((resolve, reject) => {
+            const sql = month ?
+                `SELECT * FROM hours WHERE date LIKE '${year}-${month}%'` :
+                `SELECT * FROM hours WHERE date LIKE '${year}%'`;
+            db.all(sql, [], (err, rows) => {
+                if (err) {
+                    console.error(`[API Debug] Error fetching hours from database:`, err);
+                    reject(err);
+                } else {
+                    resolve(rows || []);
+                }
+            });
+        });
+        console.log(`[API Debug] Fetched ${dbHours.length} hours from database for year ${year}${month ? `, month ${month}` : ''}`);
+
+        // Create a map of hours in database by ID
+        const dbHoursMap = new Map<number, any>();
+        for (const hour of dbHours) {
+            dbHoursMap.set(hour.id, hour);
+        }
+
+        // Find hours that are in Gripp but not in database
+        const missingHours = [];
+        for (const hour of filteredGrippHours) {
+            const hourId = typeof hour.id === 'string' ? parseInt(hour.id, 10) : hour.id;
+            if (!dbHoursMap.has(hourId)) {
+                missingHours.push(hour);
+            }
+        }
+
+        // Calculate statistics
+        const missingHoursCount = missingHours.length;
+        const missingHoursPercentage = (missingHoursCount / filteredGrippHours.length) * 100;
+
+        // Group missing hours by month
+        const missingHoursByMonth: Record<string, any[]> = {};
+        for (const hour of missingHours) {
+            let dateString: string = '';
+            if (typeof hour.date === 'string') {
+                dateString = hour.date;
+            } else if (typeof hour.date === 'object' && hour.date?.date) {
+                dateString = hour.date.date;
+            }
+
+            if (dateString) {
+                const dateParts = dateString.split('-');
+                if (dateParts.length >= 2) {
+                    const month = dateParts[1];
+                    if (!missingHoursByMonth[month]) {
+                        missingHoursByMonth[month] = [];
+                    }
+                    missingHoursByMonth[month].push(hour);
+                }
+            }
+        }
+
+        // Calculate total missing hours per month
+        const missingHoursTotalsByMonth: Record<string, number> = {};
+        for (const month in missingHoursByMonth) {
+            let total = 0;
+            for (const hour of missingHoursByMonth[month]) {
+                const amount = parseFloat(hour.amount || '0') || 0;
+                total += amount;
+            }
+            missingHoursTotalsByMonth[month] = total;
+        }
+
+        // Return results
+        res.status(200).json({
+            year,
+            month: month || 'all',
+            grippHoursCount: filteredGrippHours.length,
+            dbHoursCount: dbHours.length,
+            missingHoursCount,
+            missingHoursPercentage: missingHoursPercentage.toFixed(2) + '%',
+            missingHoursByMonth: Object.keys(missingHoursByMonth).reduce((acc, month) => {
+                acc[month] = missingHoursByMonth[month].length;
+                return acc;
+            }, {} as Record<string, number>),
+            missingHoursTotalsByMonth,
+            sampleMissingHours: missingHours.slice(0, limit) // Return only the first 'limit' records
+        });
+    } catch (error: any) {
+        console.error(`[API Debug] Error comparing hours for year ${year}:`, error);
+        res.status(500).json({
+            year,
+            error: error.message || 'Unknown error',
+            message: `Failed to compare hours for year ${year}`
+        });
+    }
+});
+
 // Remove simple root route
 /*
 app.get('/', (req: Request, res: Response) => {
-    process.stdout.write("[Server Running - stdout] Handling GET / request.\n"); 
+    process.stdout.write("[Server Running - stdout] Handling GET / request.\n");
     res.status(200).send('Hello World from DB Init Test Server!');
 });
 */
@@ -485,14 +758,14 @@ async function initializeAndStart() {
         console.log('[Server Init] Initializing DB schema...');
         await initializeDatabase(db); // Pass the existing connection
         console.log('[Server Init] Database initialization successful.');
-        
+
         const server = app.listen(port, () => {
             console.log(`[Server Init] Backend server listening on http://localhost:${port}`);
         });
 
         server.on('error', (error) => {
             console.error('[Server Init] Server instance emitted error:', error);
-            process.exit(1); 
+            process.exit(1);
         });
 
     } catch (error) {
@@ -503,7 +776,7 @@ async function initializeAndStart() {
 
 console.log('[Server Init] Starting initialization and server...');
 initializeAndStart();
-// --- End Start Server --- 
+// --- End Start Server ---
 
 // Remove old startServer function and call
 /*
@@ -523,7 +796,7 @@ startServer();
 //         getDbConnection(); // Establish connection
 //         await initializeDatabase(); // Initialize schema if needed
 //         console.log('Database connection and initialization successful.');
-        
+
 //         app.listen(port, () => {
 //             console.log(`Backend server listening on http://localhost:${port}`);
 //             // setupScheduledSync(); // Start the scheduler after server starts
@@ -539,23 +812,23 @@ startServer();
 // API Routes (commented out)
 // app.get('/api/revenue', async (req, res) => { ... });
 // app.post('/api/sync', async (req, res) => { ... });
-// ... other routes ... 
-*/ 
+// ... other routes ...
+*/
 
 // --- KPI Routes ---
 
 // GET KPI Data Endpoint
 app.get("/api/kpi", async (req: Request, res: Response) => {
     const year = req.query.year ? parseInt(req.query.year as string) : new Date().getFullYear();
-    
+
     console.log(`[API KPI] Getting KPI data for year ${year}`);
-    
+
     try {
         const kpiData = await getKPIData(year);
         return res.status(200).json(kpiData);
     } catch (error: any) {
         console.error('[API KPI] Error:', error);
-        
+
         // Create default response with 12 months
         const monthsData: any[] = [];
         for (let i = 1; i <= 12; i++) {
@@ -568,7 +841,7 @@ app.get("/api/kpi", async (req: Request, res: Response) => {
                 totalRevenue: 0
             });
         }
-        
+
         return res.status(500).json({
             success: false,
             message: `Error: ${error.message}`,
@@ -580,7 +853,7 @@ app.get("/api/kpi", async (req: Request, res: Response) => {
 // POST Endpoint to update manual KPI values
 app.post("/api/kpi/update", async (req: Request, res: Response) => {
     const { year, month, field, value } = req.body;
-    
+
     console.log(`[API KPI] Received update request:`, req.body);
 
     // Basic validation
@@ -600,18 +873,18 @@ app.post("/api/kpi/update", async (req: Request, res: Response) => {
         // Get just the month part (last segment after dash)
         cleanMonth = cleanMonth.split('-').pop() || '';
     }
-    
+
     try {
         // Pass the month as a string to match the existing function signature
         const result = await updateManualKPIValue(year, month, field as 'targetRevenue' | 'finalRevenue', value);
-        
+
         return res.status(result.success ? 200 : 500).json({
             success: result.success,
             message: result.message
         });
     } catch (error: any) {
         console.error('[API KPI] Update error:', error);
-        
+
         return res.status(500).json({
             success: false,
             message: `Error: ${error.message}`
@@ -626,4 +899,4 @@ app.post("/api/kpi/update", async (req: Request, res: Response) => {
 // ... (initializeAndStart function) ...
 // Verwijder de tweede aanroep van initializeAndStart
 // initializeAndStart();
-//# sourceMappingURL=server.js.map 
+//# sourceMappingURL=server.js.map

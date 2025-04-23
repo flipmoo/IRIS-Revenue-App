@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Clear IRIS Cache</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #0369a1;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #0284c7;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+        .error {
+            background-color: #fee2e2;
+            color: #b91c1c;
+        }
+    </style>
+</head>
+<body>
+    <h1>IRIS Cache Manager</h1>
+    <p>Gebruik deze pagina om de cache van de IRIS applicatie te wissen. Dit is nuttig als je problemen ondervindt met het weergeven van de meest recente data.</p>
+
+    <div style="background-color: #f0f9ff; border: 1px solid #bae6fd; padding: 10px; border-radius: 4px; margin-bottom: 20px;">
+        <h3 style="margin-top: 0; color: #0369a1;">Wanneer gebruik je deze functie?</h3>
+        <ul>
+            <li>Als je data hebt gesynchroniseerd maar de wijzigingen niet ziet in de interface</li>
+            <li>Als je handmatige wijzigingen hebt aangebracht (zoals target of definitieve omzet) maar deze niet worden weergegeven</li>
+            <li>Als je vermoedt dat je oude of verouderde data ziet</li>
+        </ul>
+        <p><strong>Let op:</strong> Na het wissen van de cache word je automatisch teruggestuurd naar de hoofdpagina.</p>
+    </div>
+
+    <div>
+        <button onclick="clearCache()">Wis Alle Cache</button>
+        <button onclick="clearRevenueCache()">Wis Alleen Revenue Cache</button>
+        <button onclick="clearKpiCache()">Wis Alleen KPI Cache</button>
+    </div>
+
+    <div id="result"></div>
+
+    <script>
+        function showResult(message, isSuccess) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.textContent = message;
+            resultDiv.className = isSuccess ? 'success' : 'error';
+        }
+
+        function clearCache() {
+            try {
+                localStorage.removeItem('iris-revenue-cache');
+                localStorage.removeItem('iris-kpi-cache');
+                showResult('Alle cache is succesvol gewist! Je wordt doorgestuurd naar de hoofdpagina...', true);
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 1500);
+            } catch (error) {
+                showResult(`Fout bij het wissen van de cache: ${error.message}`, false);
+            }
+        }
+
+        function clearRevenueCache() {
+            try {
+                localStorage.removeItem('iris-revenue-cache');
+                showResult('Revenue cache is succesvol gewist! Je wordt doorgestuurd naar de hoofdpagina...', true);
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 1500);
+            } catch (error) {
+                showResult(`Fout bij het wissen van de revenue cache: ${error.message}`, false);
+            }
+        }
+
+        function clearKpiCache() {
+            try {
+                localStorage.removeItem('iris-kpi-cache');
+                showResult('KPI cache is succesvol gewist! Je wordt doorgestuurd naar de hoofdpagina...', true);
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 1500);
+            } catch (error) {
+                showResult(`Fout bij het wissen van de KPI cache: ${error.message}`, false);
+            }
+        }
+    </script>
+</body>
+</html>

@@ -5,11 +5,11 @@ dotenv.config();
 
 const GRIPP_API_KEY = process.env.GRIPP_API_KEY;
 // Base URL for JSON-RPC endpoint - Using the central public API URL as instructed
-const GRIPP_BASE_URL = 'https://api.gripp.com/public/api3.php'; 
+const GRIPP_BASE_URL = 'https://api.gripp.com/public/api3.php';
 
 if (!GRIPP_API_KEY) {
   console.error('FATAL ERROR: GRIPP_API_KEY is not defined in environment variables.');
-  process.exit(1); 
+  process.exit(1);
 }
 
 // --- JSON-RPC Specific Interfaces ---
@@ -22,7 +22,7 @@ interface JsonRpcRequest {
 interface JsonRpcError {
     code: number;
     message: string;
-    data?: any; 
+    data?: any;
 }
 
 interface JsonRpcResponse<T> {
@@ -57,7 +57,7 @@ export class RateLimitError extends Error {
 // Rewritten fetch wrapper for Gripp API V3 JSON-RPC calls
 async function fetchGripp<T>(method: string, params: any[] = [], retries = 3, initialThrottleDelay = 500): Promise<T> {
   const url = GRIPP_BASE_URL;
-  const requestId = Date.now(); 
+  const requestId = Date.now();
 
   const headers: NodeFetchHeadersInit = {
     'Authorization': `Bearer ${GRIPP_API_KEY}`,
@@ -71,7 +71,7 @@ async function fetchGripp<T>(method: string, params: any[] = [], retries = 3, in
       id: requestId,
   };
   if (params && params.length > 0) { // Check if params array exists and has content
-      requestObject.params = params; 
+      requestObject.params = params;
   }
 
   // Correcte JSON-RPC format: een array met daarin een object
@@ -93,9 +93,9 @@ async function fetchGripp<T>(method: string, params: any[] = [], retries = 3, in
           const response = await fetch(url, {
               method: 'POST',
               headers: headers,
-              body: bodyString, 
+              body: bodyString,
           });
-          
+
           // Log rate limit headers
           const rateLimit = response.headers.get('X-RateLimit-Limit');
           const rateRemaining = response.headers.get('X-RateLimit-Remaining');
@@ -112,7 +112,7 @@ async function fetchGripp<T>(method: string, params: any[] = [], retries = 3, in
               if (!response.ok) {
                   throw new Error(`Gripp API request failed with HTTP status: ${response.status} ${response.statusText} (Body read failed)`);
               }
-              throw readError; 
+              throw readError;
           }
 
           if (!response.ok) {
@@ -133,7 +133,7 @@ async function fetchGripp<T>(method: string, params: any[] = [], retries = 3, in
           if (Array.isArray(parsedResponse) && parsedResponse.length > 0) {
               // De response zou een array moeten zijn met één object voor onze enkele request
               const jsonRpcResponse = parsedResponse[0] as JsonRpcResponse<T>;
-              
+
               // Check for standard JSON-RPC error field
               if (jsonRpcResponse.error) {
                   console.error(`[fetchGripp] Standard JSON-RPC Error found for ${method}: Code=${jsonRpcResponse.error.code}, Message=${jsonRpcResponse.error.message}`);
@@ -143,16 +143,16 @@ async function fetchGripp<T>(method: string, params: any[] = [], retries = 3, in
                   }
                   throw new Error(`Gripp API Error (${jsonRpcResponse.error.code}): ${jsonRpcResponse.error.message}`);
               }
-              
+
               // Check for custom Gripp error format with error_code and error
               if (jsonRpcResponse.error_code !== undefined || ('error' in jsonRpcResponse && jsonRpcResponse.error !== null)) {
                   const errorCode = jsonRpcResponse.error_code !== undefined ? jsonRpcResponse.error_code : "unknown";
                   // The 'error' field might be used instead of 'error_message' in some Gripp responses
                   const errorMessage = jsonRpcResponse.error_message ||
-                                      ('error' in jsonRpcResponse && jsonRpcResponse.error !== null ? 
-                                       jsonRpcResponse.error : 
+                                      ('error' in jsonRpcResponse && jsonRpcResponse.error !== null ?
+                                       jsonRpcResponse.error :
                                        null);
-                  
+
                   // Alleen een error gooien als er daadwerkelijk een foutmelding is
                   if (errorMessage !== null) {
                       console.error(`[fetchGripp] Gripp custom error format detected: Code=${errorCode}, Message=${errorMessage}`);
@@ -161,38 +161,38 @@ async function fetchGripp<T>(method: string, params: any[] = [], retries = 3, in
                       console.log(`[fetchGripp] Warning: Gripp response contains error field, but it's null. Continuing.`);
                   }
               }
-              
+
               // Check if result exists
               if (jsonRpcResponse.result === undefined || jsonRpcResponse.result === null) {
                   console.warn(`[fetchGripp] JSON-RPC response for method ${method} has null or undefined result.`);
-                  if (method.endsWith('.get')) { 
+                  if (method.endsWith('.get')) {
                       console.error(`[fetchGripp] Null/undefined result for a .get method (${method}) is unexpected.`);
                       throw new Error(`Received null or undefined result for ${method}`);
                   }
                   // For non-'get' methods, returning an empty object might be acceptable
-                  return {} as T; 
+                  return {} as T;
               }
-              
+
               // Check if result contains success=false (another Gripp error format)
-              if (jsonRpcResponse.result && 
-                  typeof jsonRpcResponse.result === 'object' && 
-                  'success' in jsonRpcResponse.result && 
+              if (jsonRpcResponse.result &&
+                  typeof jsonRpcResponse.result === 'object' &&
+                  'success' in jsonRpcResponse.result &&
                   jsonRpcResponse.result.success === false) {
                   // This is a Gripp specific error format with success=false in result
                   console.error(`[fetchGripp] Result contains success=false for ${method}`);
-                  
+
                   // Extract error message if available in the response
                   const errorMessage = 'error' in jsonRpcResponse && jsonRpcResponse.error !== null
-                      ? jsonRpcResponse.error 
+                      ? jsonRpcResponse.error
                       : 'error_message' in jsonRpcResponse && jsonRpcResponse.error_message !== null
-                          ? jsonRpcResponse.error_message 
+                          ? jsonRpcResponse.error_message
                           : `Gripp API returned success=false for method ${method}`;
-                  
+
                   const errorCode = jsonRpcResponse.error_code !== undefined ? jsonRpcResponse.error_code : "unknown";
-                  
+
                   throw new Error(`Gripp API Error (${errorCode}): ${errorMessage}`);
               }
-              
+
               // If we reach here, the call was successful
               console.log(`[fetchGripp] Successfully received result for ${method}.`);
               return jsonRpcResponse.result;
@@ -204,14 +204,14 @@ async function fetchGripp<T>(method: string, params: any[] = [], retries = 3, in
 
       } catch (error) {
           console.error(`[fetchGripp attempt ${attempts}] Error during API call for method ${method}:`, error);
-          
+
           if (error instanceof RateLimitError && attempts < retries) {
               console.warn(`[fetchGripp attempt ${attempts}] Rate limit hit. Retrying in ${currentDelay / 1000} seconds...`);
               await new Promise(resolve => setTimeout(resolve, currentDelay));
               currentDelay *= 2; // Exponential backoff
               continue; // Go to the next attempt
           }
-          
+
           // For any error, if we still have retries left, retry
           if (attempts < retries) {
               const waitTime = currentDelay;
@@ -220,7 +220,7 @@ async function fetchGripp<T>(method: string, params: any[] = [], retries = 3, in
               currentDelay *= 2; // Exponential backoff
               continue; // Go to the next attempt
           }
-          
+
           // If we've exhausted all retries, throw the error
           throw error;
       }
@@ -238,18 +238,18 @@ interface GrippPaginatedResult<ItemType> {
 }
 
 // Define a type for the filter objects used in API calls
-export type GrippFilterOperator = 
-    | 'equals' 
-    | 'notequals' 
-    | 'greater' 
-    | 'greaterequals' 
-    | 'less' 
-    | 'lessequals' 
-    | 'like' 
-    | 'notlike' 
-    | 'in' 
-    | 'notin' 
-    | 'isnull' 
+export type GrippFilterOperator =
+    | 'equals'
+    | 'notequals'
+    | 'greater'
+    | 'greaterequals'
+    | 'less'
+    | 'lessequals'
+    | 'like'
+    | 'notlike'
+    | 'in'
+    | 'notin'
+    | 'isnull'
     | 'isnotnull'
     | 'between'; // Assuming 'between' might be supported
 
@@ -263,7 +263,7 @@ export interface GrippFilter {
 export interface GrippHour {
     id: string | number; // ID can be string or number, must be present
     date: string | { date: string, timezone?: string }; // Date in string format or as date object
-    employee?: { 
+    employee?: {
         id?: string | number;
         searchname?: string;
         discr?: string;
@@ -336,7 +336,7 @@ export interface GrippProjectLine {
     sellingprice?: string | number;
     amountwritten?: string | number;
     product?: { searchname?: string };
-    offerprojectbase?: { id?: number; searchname?: string; discr?: string }; 
+    offerprojectbase?: { id?: number; searchname?: string; discr?: string };
     // --- Add New Optional Fields for Lines ---
     discount?: string | number;
     buyingprice?: string | number;
@@ -359,20 +359,18 @@ interface GetHoursOptions {
 
 // Function to get all hours (V3)
 export async function getHours(year?: string): Promise<GrippHour[]> {
-    // <<< ADDED SIMPLE LOG >>>
-    console.log(`[getHours ENTRY] Function called for year: ${year || 'all years'}`); 
-    // <<< END ADDED LOG >>>
+    console.log(`[getHours ENTRY] Function called for year: ${year || 'all years'}`);
 
     const allHours: GrippHour[] = [];
     let currentPage = 1;
-    const batchSize = 250; // Maximum value according to API documentation
+    const batchSize = 250; // Gripp API limit
     let moreData = true;
-    let totalItemsInCollection = 0;
     let retryCount = 0;
-    const MAX_RETRIES = 5; // Increased from 3 to 5
-    
+    const MAX_RETRIES = 5;
+    const MAX_PAGES = 1000; // Veiligheidsgrens om oneindige loops te voorkomen
+
     console.log(`[getHours] Starting hours fetch${year ? ` for year ${year}` : ''}...`);
-    
+
     // Build filters in the correct format
     const filters: GrippFilter[] = [];
     if (year) {
@@ -382,24 +380,24 @@ export async function getHours(year?: string): Promise<GrippHour[]> {
             operator: "greaterequals",
             value: `${year}-01-01`
         });
-        
+
         filters.push({
             field: "hour.date",
             operator: "lessequals",
             value: `${year}-12-31`
         });
-        
+
         console.log(`[getHours API DEBUG] Using filters for year ${year}:`, JSON.stringify(filters));
     }
-    
+
     console.log(`[getHours API] Starting pagination with batch size ${batchSize}...`);
-    
-    // Loop through pages
-    while (moreData) {
+
+    // Loop through pages with safety limit
+    while (moreData && currentPage <= MAX_PAGES) {
         console.log(`[getHours API] Fetching page ${currentPage}...`);
         try {
             const offset = (currentPage - 1) * batchSize;
-            
+
             // Correct structure according to API documentation
             const options = {
                 paging: {
@@ -429,21 +427,21 @@ export async function getHours(year?: string): Promise<GrippHour[]> {
                     'description'
                 ]
             };
-            
+
             // API expects [filters, options] as parameters
             const params = filters.length > 0 ? [filters, options] : [[], options];
-            
+
             // Log the exact request for debugging
             console.log(`[getHours API DEBUG] Request params for page ${currentPage}:`, JSON.stringify(params));
-            
+
             const response = await fetchGripp<GrippActualPaginatedResult<GrippHour>>("hour.get", params);
-            
+
             // Check if there's a valid result
             if (!response) {
                 console.error('[getHours API] Received null/undefined response from API');
                 // Wait a bit before retrying
                 await new Promise(resolve => setTimeout(resolve, 2000));
-                
+
                 // Retry this page
                 if (retryCount < MAX_RETRIES) {
                     retryCount++;
@@ -456,50 +454,46 @@ export async function getHours(year?: string): Promise<GrippHour[]> {
                     continue;
                 }
             }
-            
+
             // Check if there are hours
             if (!response?.rows || response.rows.length === 0) {
                 console.log('[getHours API] No hours found in this page, stopping pagination.');
                 moreData = false;
                 break;
             }
-            
+
             // Process hours from this page
             const hoursInThisPage = response.rows;
-            
-            // <<< LOGGING: Log the first few hour objects from the API response >>>
-            if (hoursInThisPage && hoursInThisPage.length > 0 && currentPage === 1) { // Only log for the first page
-                 console.log('[getHours API DEBUG] First few hour objects from API response:', JSON.stringify(hoursInThisPage.slice(0, 5), null, 2)); 
+
+            // Log the first few hour objects from the first page
+            if (hoursInThisPage && hoursInThisPage.length > 0 && currentPage === 1) {
+                console.log('[getHours API DEBUG] First few hour objects from API response:', JSON.stringify(hoursInThisPage.slice(0, 5), null, 2));
             }
-            // <<< END LOGGING >>>
 
             allHours.push(...hoursInThisPage);
-            
+
             // Log progress
             console.log(`[getHours API] Page ${currentPage}: Retrieved ${hoursInThisPage.length} hours. Total so far: ${allHours.length}`);
-            
-            // Update total and check if there are more pages
-            totalItemsInCollection = response.count || 0;
-            
-            // Check if there are more items to fetch
-            if (response.more_items_in_collection === false || 
-                !response.next_start || 
-                allHours.length >= totalItemsInCollection || 
-                hoursInThisPage.length < batchSize) {
+
+            // BELANGRIJK: We negeren de more_items_in_collection flag omdat deze niet betrouwbaar is
+            // We gaan door met pagineren totdat we een lege pagina krijgen
+            if (hoursInThisPage.length < batchSize) {
+                // Als we minder uren krijgen dan de batchSize, zijn we waarschijnlijk klaar
+                console.log(`[getHours API] Received fewer hours (${hoursInThisPage.length}) than batch size (${batchSize}). Stopping pagination.`);
                 moreData = false;
-                console.log(`[getHours API] Pagination complete. Total hours retrieved: ${allHours.length}`);
             } else {
-                // Prepare for next page
+                // Altijd doorgaan naar de volgende pagina zolang we een volle pagina uren krijgen
+                console.log(`[getHours API] Continuing to next page.`);
                 currentPage++;
                 retryCount = 0;
-                
+
                 // Small delay to avoid hitting rate limits
                 await new Promise(resolve => setTimeout(resolve, 500));
             }
-            
+
         } catch (error) {
             console.error(`[getHours API] Error fetching page ${currentPage}:`, error);
-            
+
             // Retry logic
             if (retryCount < MAX_RETRIES) {
                 retryCount++;
@@ -515,20 +509,51 @@ export async function getHours(year?: string): Promise<GrippHour[]> {
             }
         }
     }
-    
-    console.log(`[getHours] Fetched a total of ${allHours.length} hours for year ${year || 'all years'}.`);
+
+    if (currentPage > MAX_PAGES) {
+        console.warn(`[getHours API] Reached maximum page limit (${MAX_PAGES}). This may indicate an issue with pagination.`);
+    }
+
+    // Log meer details over de opgehaalde uren, inclusief maandverdeling
+    if (year) {
+        const monthDistribution: Record<string, number> = {};
+        allHours.forEach(hour => {
+            if (hour.date) {
+                // Handle both string and object date formats
+                let dateString: string;
+                if (typeof hour.date === 'string') {
+                    dateString = hour.date;
+                } else if (typeof hour.date === 'object' && hour.date.date) {
+                    dateString = hour.date.date;
+                } else {
+                    return; // Skip this hour if date format is unknown
+                }
+
+                const dateParts = dateString.split('-');
+                if (dateParts.length >= 2) {
+                    const month = dateParts[1];
+                    monthDistribution[month] = (monthDistribution[month] || 0) + 1;
+                }
+            }
+        });
+
+        console.log(`[getHours] Fetched a total of ${allHours.length} hours for year ${year}.`);
+        console.log(`[getHours] Month distribution of fetched hours:`, monthDistribution);
+    } else {
+        console.log(`[getHours] Fetched a total of ${allHours.length} hours for all years.`);
+    }
     return allHours;
 }
 
 // Function to get all projects (V3)
 export async function getProjects(filters: any[] | null = null, options: Record<string, any> = {}): Promise<GrippProject[]> {
     const requiredFields = [
-        'id', 
+        'id',
         'searchname',
-        'company.id', 
-        'company.searchname', 
+        'company.id',
+        'company.searchname',
         'company.discr',
-        'tags.id', 
+        'tags.id',
         'tags.name', // Use name instead of searchname for tags usually
         // --- New Fields ---
         'number',
@@ -552,15 +577,15 @@ export async function getProjects(filters: any[] | null = null, options: Record<
     let fetchMore = true;
     let totalFetched = 0;
 
-    console.log(`Starting to fetch all projects from Gripp (V3)...`); 
-    
+    console.log(`Starting to fetch all projects from Gripp (V3)...`);
+
     const filtersParam = filters ? [...filters] : []; // Use empty array
 
     while (fetchMore) {
         const offset = (currentPage - 1) * limit;
         // Aangepaste options ZONDER relations
-        const currentOptions = { 
-            ...options, 
+        const currentOptions = {
+            ...options,
             paging: { firstresult: offset, maxresults: limit }
             // relations: ['tags'] // <<< TEMPORARILY REMOVED
         };
@@ -569,7 +594,7 @@ export async function getProjects(filters: any[] | null = null, options: Record<
         console.log(`Fetching projects page ${currentPage} (offset ${offset})...`);
         try {
             const response = await fetchGripp<GrippActualPaginatedResult<GrippProject>>("project.get", params);
-            
+
             const itemsArray = response?.rows;
             const hasValidItems = Array.isArray(itemsArray) && itemsArray.length > 0;
 
@@ -581,7 +606,7 @@ export async function getProjects(filters: any[] | null = null, options: Record<
                     currentPage++; // Increment page only if successful and more items exist
                     console.log(`API indicates more projects exist.`);
                 } else {
-                    fetchMore = false; 
+                    fetchMore = false;
                     console.log(`API indicates no more projects in collection.`);
                 }
             } else {
@@ -590,7 +615,7 @@ export async function getProjects(filters: any[] | null = null, options: Record<
             }
         } catch (error) {
             console.error(`Error fetching page ${currentPage} of projects (V3):`, error);
-            fetchMore = false; 
+            fetchMore = false;
             console.error('Stopping project fetching due to error.');
         }
     }
@@ -601,12 +626,12 @@ export async function getProjects(filters: any[] | null = null, options: Record<
 // Function to get all offers (V3)
 export async function getOffers(filters: any[] | null = null, options: Record<string, any> = {}): Promise<GrippOffer[]> {
      const requiredFields = [
-        'id', 
+        'id',
         'searchname',
-        'company.id', 
-        'company.searchname', 
+        'company.id',
+        'company.searchname',
         'company.discr',
-        'tags.id', 
+        'tags.id',
         'tags.name',
         // --- New Fields (Same as projects) ---
         'number',
@@ -637,10 +662,10 @@ export async function getOffers(filters: any[] | null = null, options: Record<st
 
     while (fetchMore) {
         const offset = (currentPage - 1) * limit;
-        const currentOptions = { 
-            ...options, 
+        const currentOptions = {
+            ...options,
             paging: { firstresult: offset, maxresults: limit },
-            relations: ['tags'] 
+            relations: ['tags']
         };
          // Send filtersParam (which is [] if no filters were passed)
         const params = [filtersParam, currentOptions];
@@ -677,6 +702,65 @@ export async function getOffers(filters: any[] | null = null, options: Record<st
     return allOffers;
 }
 
+// Function to get project lines (V3)
+export async function getProjectLines(): Promise<any[]> {
+    const allLines: any[] = [];
+    let currentPage = 1;
+    const limit = 250;
+    let fetchMore = true;
+    let totalFetched = 0;
+
+    console.log(`Starting to fetch all project lines from Gripp (V3)...`);
+
+    while (fetchMore) {
+        const offset = (currentPage - 1) * limit;
+        const options = {
+            paging: { firstresult: offset, maxresults: limit },
+            filters: [
+                {
+                    field: "offerprojectline.offerprojectbase.discr",
+                    operator: "equals",
+                    value: "opdracht"
+                }
+            ]
+        };
+        // Use empty array for filters
+        const params = [[], options];
+
+        console.log(`Fetching project lines page ${currentPage} (offset ${offset})...`);
+        try {
+            const response = await fetchGripp<GrippActualPaginatedResult<any>>("offerprojectline.get", params);
+
+            const itemsArray = response?.rows;
+            const hasValidItems = Array.isArray(itemsArray) && itemsArray.length > 0;
+
+            if (hasValidItems) {
+                allLines.push(...itemsArray);
+                totalFetched += itemsArray.length;
+                console.log(`Fetched page ${currentPage} of project lines. Count: ${itemsArray.length}. Total so far: ${totalFetched}`);
+
+                if (response && response.more_items_in_collection) {
+                    currentPage++;
+                    fetchMore = true;
+                } else {
+                    fetchMore = false;
+                    console.log(`API indicates no more project lines in collection (more_items_in_collection: ${response?.more_items_in_collection}).`);
+                }
+            } else {
+                fetchMore = false;
+                console.log(`No project lines found on this page or unexpected response (check: response?.rows is valid array with length > 0 failed). Stopping fetch.`);
+            }
+        } catch (error) {
+            console.error(`Error fetching page ${currentPage} of project lines (V3):`, error);
+            fetchMore = false;
+            console.error('Stopping project lines fetching due to error.');
+        }
+    }
+
+    console.log(`Finished fetching all project lines (V3). Total items retrieved: ${totalFetched}`);
+    return allLines;
+}
+
 // Function to get offerprojectlines (V3)
 export async function getOfferProjectLines(): Promise<any[]> {
     const allLines: any[] = [];
@@ -698,7 +782,7 @@ export async function getOfferProjectLines(): Promise<any[]> {
         console.log(`Fetching offerprojectlines page ${currentPage} (offset ${offset})...`);
         try {
             const response = await fetchGripp<GrippActualPaginatedResult<any>>("offerprojectline.get", params);
-            
+
             const itemsArray = response?.rows;
             const hasValidItems = Array.isArray(itemsArray) && itemsArray.length > 0;
 
@@ -706,7 +790,7 @@ export async function getOfferProjectLines(): Promise<any[]> {
                 allLines.push(...itemsArray);
                 totalFetched += itemsArray.length;
                 console.log(`Fetched page ${currentPage} of offerprojectlines. Count: ${itemsArray.length}. Total so far: ${totalFetched}`);
-                
+
                 if (response && response.more_items_in_collection) {
                     currentPage++;
                     fetchMore = true;
@@ -724,7 +808,7 @@ export async function getOfferProjectLines(): Promise<any[]> {
             console.error('Stopping offerprojectlines fetching due to error.');
         }
     }
-    
+
     console.log(`Finished fetching all offerprojectlines (V3). Total items retrieved: ${totalFetched}`);
     return allLines;
 }

@@ -18,6 +18,8 @@ export interface RevenueEntity {
     name: string;
     companyName?: string;
     type?: string;
+    displayType?: string; // Added to match backend EnrichedRevenueEntity
+    herkomst?: 'Project' | 'Offerte'; // Add field to indicate project or offer
     totalBudget?: number;
     totalexclvat?: number;
     monthlyHours?: { [key: string]: number };
@@ -48,7 +50,7 @@ export interface YearlyKPIs {
 export const getMockKPIs = (year: number): YearlyKPIs => {
     const months = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
         .map(month => `${year}-${month}`);
-    
+
     return {
         year,
         months: months.map(month => ({
@@ -56,7 +58,7 @@ export const getMockKPIs = (year: number): YearlyKPIs => {
             targetRevenue: Math.floor(Math.random() * 100000) + 80000, // Random target tussen 80k-180k
             finalRevenue: month < `${year}-${new Date().getMonth() + 1}` ? Math.floor(Math.random() * 100000) + 80000 : undefined, // Alleen definitief voor voltooide maanden
             totalRevenue: Math.floor(Math.random() * 100000) + 70000, // Random totaal tussen 70k-170k
-            get targetFinalDiff() { 
+            get targetFinalDiff() {
                 return this.finalRevenue !== undefined ? this.finalRevenue - this.targetRevenue : undefined;
             },
             get targetTotalDiff() {
@@ -85,7 +87,7 @@ export const getRevenueDataByYear = async (year: number): Promise<RevenueEntity[
     try {
         console.log(`[API Service] Fetching revenue data for year: ${year}`);
         const response = await apiClient.get<RevenueEntity[]>('/revenue', {
-            params: { year } 
+            params: { year }
         });
         console.log(`[API Service] Successfully fetched data for year: ${year}`, response.data);
         return response.data;
@@ -153,11 +155,14 @@ export const syncOffersOnly = async (): Promise<SyncResponse> => {
 
 /**
  * Synchronizes hours for a specific year
+ * @param year The year to synchronize
+ * @param forceDeleteAll If true, all hours for the year will be deleted before syncing
  */
-export const syncHoursForYear = async (year: number): Promise<SyncResponse> => {
+export const syncHoursForYear = async (year: number, forceDeleteAll: boolean = false): Promise<SyncResponse> => {
     try {
-        console.log(`[API Service] Triggering hours synchronization for year ${year}`);
-        const response = await apiClient.post<SyncResponse>(`/sync/hours-only?year=${year}`);
+        console.log(`[API Service] Triggering hours synchronization for year ${year}${forceDeleteAll ? ' (FORCE DELETE ALL)' : ''}`);
+        // Gebruik de nieuwe API-endpoint
+        const response = await apiClient.post<SyncResponse>(`/sync/hours/${year}?forceDeleteAll=${forceDeleteAll ? 'true' : 'false'}`);
         return response.data;
     } catch (error) {
         console.error(`[API Service] Error during hours sync for year ${year}:`, error);
@@ -184,7 +189,7 @@ export const getKPIDataByYear = async (year: number): Promise<YearlyKPIs> => {
     try {
         console.log(`[API Service] Fetching KPI data for year: ${year}`);
         const response = await apiClient.get<YearlyKPIs>('/kpi', {
-            params: { year } 
+            params: { year }
         });
         console.log(`[API Service] Successfully fetched KPI data for year: ${year}`, response.data);
         return response.data;
@@ -256,8 +261,8 @@ export const updatePreviousYearConsumption = async (
             errorMessage = error.response.data.message;
         }
         // Return een gestandaardiseerd error object
-        return { success: false, message: errorMessage }; 
+        return { success: false, message: errorMessage };
     }
 };
 
-// Add other API functions here later (e.g., for updating manual revenue) 
+// Add other API functions here later (e.g., for updating manual revenue)
