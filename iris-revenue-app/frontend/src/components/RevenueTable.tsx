@@ -7,13 +7,14 @@ import {
 } from '../services/api';
 // Use the alias path if available
 import { Button } from '@/components/ui/button';
+import useRevenueStore, { CalculationMode } from '../store/revenueStore';
 
 interface RevenueTableProps {
   data: RevenueEntity[];
   year: number;
   kpiData: YearlyKPIs | null;
   onKpiUpdate: (updatedKpiData: YearlyKPIs) => Promise<void>;
-  onRefreshNeeded: () => Promise<void>;
+  onRefreshNeeded: (forceRefresh?: boolean) => Promise<void>;
 }
 
 // ViewMode typedefinitie
@@ -62,6 +63,12 @@ const getRowTypeClass = (entity: RevenueEntity): string => {
 const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiUpdate, onRefreshNeeded }) => {
   // State voor weergave mode (uren/euro's) - DEFAULT NAAR OMZET
   const [viewMode, setViewMode] = useState<ViewMode>('revenue');
+
+  // Haal de calculation mode uit de store
+  const { calculationMode, setCalculationMode } = useRevenueStore();
+
+  // Log de calculation mode bij elke render
+  console.log(`[RevenueTable] Current calculation mode: ${calculationMode}`);
 
   // State voor sorteren
   const [sortColumn, setSortColumn] = useState<string>('name');
@@ -207,9 +214,7 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
     ? filteredData.reduce((sum, entity) =>
         sum + (includedRows[entity.id] ? (entity.previousYearBudgetUsed || 0) : 0), 0)
     : 0;
-  const grandTotal = viewMode === 'revenue'
-    ? monthlyGrandTotal + totalPreviousYearConsumption
-    : monthlyGrandTotal;
+  const grandTotal = monthlyGrandTotal;
 
   // Bereken restant totaal (sum of all entity remaining values) - enkel voor geïncludeerde rijen
   const totalBudget = filteredData.reduce((sum, entity) => {
@@ -232,7 +237,7 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
   const totalTargetFinalDiff = totalFinalRevenue - totalTarget;
 
   // Totaal voor verschil target/totaal
-  const totalTargetTotalDiff = grandTotal - totalTarget;
+  const totalTargetTotalDiff = monthlyGrandTotal - totalTarget;
 
   // Helper voor het formatteren van getallen
   const formatNumber = (value: number | undefined, prefix: string = ''): string => {
@@ -244,7 +249,9 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
           style: 'currency',
           currency: 'EUR',
           minimumFractionDigits: 0,
-          maximumFractionDigits: 0
+          maximumFractionDigits: 0,
+          // Gebruik een vaste breedte voor de getallen
+          useGrouping: true
         }).format(value)}`;
   };
 
@@ -283,50 +290,127 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
     if (!editingKpi || !kpiData) return;
 
     try {
-      const value = parseFloat(editValue);
-      if (isNaN(value)) {
-        throw new Error('Ongeldige numerieke waarde');
+      // Verbeterde validatie met betere foutmelding
+      const trimmedValue = editValue.trim();
+
+      // Controleer of de waarde niet leeg is
+      // Lege waarde of '0' is toegestaan (wordt behandeld als 0)
+      if (trimmedValue === '') {
+        // Als de waarde leeg is, behandel het als 0
+        setEditValue('0');
       }
 
-      // Update via API
-      await updateKPIValue(
-        year,
-        editingKpi.month,
-        editingKpi.field,
-        value
-      );
+      // Controleer of het een geldig getal is
+      const value = parseFloat(trimmedValue);
+      if (isNaN(value)) {
+        alert('Voer een geldig getal in. Gebruik een punt (.) als decimaalteken.');
+        return; // Niet doorgaan met opslaan
+      }
 
-      // Update local state (immediately for responsiveness)
-      const updatedMonths = kpiData.months.map(month => {
-        if (month.month === editingKpi.month) {
-          const updatedMonth = { ...month, [editingKpi.field]: value };
-          if (editingKpi.field === 'finalRevenue') {
-            updatedMonth.targetFinalDiff = value - month.targetRevenue;
-          }
-          if (editingKpi.field === 'targetRevenue') {
-            updatedMonth.targetFinalDiff = (month.finalRevenue || 0) - value;
-            updatedMonth.targetTotalDiff = month.totalRevenue - value;
-          }
-          return updatedMonth;
+      // Toon een indicator dat we aan het opslaan zijn
+      console.log(`Saving KPI: ${editingKpi.month}, ${editingKpi.field} = ${value}`);
+
+      // Eerst de API-aanroep doen
+      try {
+        const response = await updateKPIValue(
+          year,
+          editingKpi.month,
+          editingKpi.field,
+          value
+        );
+
+        console.log("API response:", response);
+
+        if (response.success) {
+          // Als de API-aanroep succesvol is, update de lokale data
+          // Update local state (immediately for responsiveness)
+          const updatedMonths = kpiData.months.map(month => {
+            if (month.month === editingKpi.month) {
+              const updatedMonth = { ...month, [editingKpi.field]: value };
+              if (editingKpi.field === 'finalRevenue') {
+                updatedMonth.targetFinalDiff = value - month.targetRevenue;
+              }
+              if (editingKpi.field === 'targetRevenue') {
+                updatedMonth.targetFinalDiff = (month.finalRevenue || 0) - value;
+                updatedMonth.targetTotalDiff = month.totalRevenue - value;
+              }
+              return updatedMonth;
+            }
+            return month;
+          });
+
+          const updatedKpiData = { ...kpiData, months: updatedMonths };
+
+          // Call the handler passed from RevenuePage (which now also refreshes)
+          await onKpiUpdate(updatedKpiData);
+          console.log("KPI update complete, data refreshed");
+        } else {
+          // Als de API-aanroep mislukt, toon een foutmelding
+          alert(`Fout bij opslaan: ${response.message}`);
         }
-        return month;
-      });
-
-      const updatedKpiData = { ...kpiData, months: updatedMonths };
-      // Call the handler passed from RevenuePage (which now also refreshes)
-      await onKpiUpdate(updatedKpiData);
-
+      } catch (apiError) {
+        console.error('API Error saving KPI value:', apiError);
+        alert(`API fout bij opslaan: ${apiError instanceof Error ? apiError.message : 'Onbekende fout'}`);
+        return;
+      }
+    } catch (err) {
+      console.error('Error in handleSaveKpi:', err);
+      alert(`Er is een fout opgetreden: ${err instanceof Error ? err.message : 'Onbekende fout'}`);
+    } finally {
       // Reset editing state
       setEditingKpi(null);
-    } catch (err) {
-      console.error('Error saving KPI value:', err);
-      alert('Er is een fout opgetreden bij het opslaan van de KPI waarde.');
     }
   };
 
-  // Annuleer bewerken
-  const handleCancelEdit = () => {
-    setEditingKpi(null);
+  // Annuleer bewerken en zet waarde op 0
+  const handleCancelEdit = async () => {
+    if (!editingKpi || !kpiData) {
+      setEditingKpi(null);
+      return;
+    }
+
+    try {
+      // Expliciet de waarde op 0 zetten via API
+      console.log(`Setting KPI value to 0: ${editingKpi.month}, ${editingKpi.field}`);
+
+      const response = await updateKPIValue(
+        year,
+        editingKpi.month,
+        editingKpi.field,
+        0 // Expliciet 0 als waarde
+      );
+
+      if (response.success) {
+        // Als de API-aanroep succesvol is, update de lokale data
+        const updatedMonths = kpiData.months.map(month => {
+          if (month.month === editingKpi.month) {
+            const updatedMonth = { ...month, [editingKpi.field]: 0 };
+            if (editingKpi.field === 'finalRevenue') {
+              updatedMonth.targetFinalDiff = 0 - month.targetRevenue;
+            }
+            if (editingKpi.field === 'targetRevenue') {
+              updatedMonth.targetFinalDiff = (month.finalRevenue || 0) - 0;
+              updatedMonth.targetTotalDiff = month.totalRevenue - 0;
+            }
+            return updatedMonth;
+          }
+          return month;
+        });
+
+        const updatedKpiData = { ...kpiData, months: updatedMonths };
+
+        // Call the handler passed from RevenuePage (which now also refreshes)
+        await onKpiUpdate(updatedKpiData);
+        console.log("KPI update complete, data refreshed");
+      } else {
+        console.error("Failed to set KPI value to 0:", response.message);
+      }
+    } catch (err) {
+      console.error('Error in handleCancelEdit:', err);
+    } finally {
+      // Reset editing state
+      setEditingKpi(null);
+    }
   };
 
   // --- NEW: Handlers for Previous Year Consumption Editing ---
@@ -343,73 +427,177 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
     if (!editingConsumption) return;
 
     try {
+      // Verbeterde validatie met betere foutmelding
       const amountToSave = consumptionEditValue.trim();
+
+      // Controleer of de waarde niet leeg is
+      // Lege waarde of '0' is toegestaan (wordt behandeld als 0)
+      if (amountToSave === '') {
+        // Als de waarde leeg is, behandel het als 0
+        setConsumptionEditValue('0');
+      }
+
+      // Controleer of het een geldig getal is
       const parsedValue = parseFloat(amountToSave);
       if (isNaN(parsedValue)) {
-        throw new Error('Ongeldige numerieke waarde');
+        alert('Voer een geldig getal in. Gebruik een punt (.) als decimaalteken.');
+        return; // Niet doorgaan met opslaan
       }
 
+      // Toon een indicator dat we aan het opslaan zijn
       console.log(`Saving consumption: Project ID: ${editingConsumption.projectId}, Target Year: ${editingConsumption.targetYear}, Amount: ${amountToSave}, ViewMode: ${viewMode}`);
-      const response = await updatePreviousYearConsumption(
-        editingConsumption.projectId,
-        editingConsumption.targetYear,
-        amountToSave,
-        viewMode
-      );
 
-      if (response.success === false) {
-          console.error("Failed to update consumption:", response.message);
-          alert(`Fout bij opslaan: ${response.message}`);
-      } else {
-          console.log("Consumption update API call successful (message from backend: " + response.message + ")");
+      // Eerst de API-aanroep doen
+      try {
+        const response = await updatePreviousYearConsumption(
+          editingConsumption.projectId,
+          editingConsumption.targetYear,
+          amountToSave,
+          viewMode
+        );
+
+        console.log("API response:", response);
+
+        if (response.success) {
+          // Als de API-aanroep succesvol is, update de lokale data
+          const entityToUpdate = data.find(entity => entity.id === editingConsumption.projectId);
+          if (entityToUpdate) {
+            entityToUpdate.previousYearBudgetUsed = parsedValue;
+          }
+
           // Trigger data refresh by calling the new prop
           console.log("Triggering data refresh via onRefreshNeeded...");
-          await onRefreshNeeded();
-      }
+          await onRefreshNeeded(true); // Force refresh om zeker te zijn dat de data up-to-date is
 
+          // Toon een bevestiging dat het opslaan is gelukt
+          console.log("Data refresh complete");
+        } else {
+          // Als de API-aanroep mislukt, toon een foutmelding
+          alert(`Fout bij opslaan: ${response.message}`);
+        }
+      } catch (apiError) {
+        console.error('API Error saving consumption value:', apiError);
+        alert(`API fout bij opslaan: ${apiError instanceof Error ? apiError.message : 'Onbekende fout'}`);
+        return;
+      }
     } catch (err: unknown) {
-      console.error('Error saving consumption value:', err);
+      console.error('Error in handleSaveConsumption:', err);
       const errorMessage = err instanceof Error ? err.message : 'Onbekende fout';
       alert(`Er is een fout opgetreden bij het opslaan: ${errorMessage}`);
     } finally {
+      // Sluit de bewerkingsmodus
       setEditingConsumption(null);
     }
   };
 
   const handleCancelConsumptionEdit = () => {
+    // Alleen de bewerkingsmodus sluiten zonder wijzigingen op te slaan
     setEditingConsumption(null);
+    console.log('Bewerking geannuleerd, geen wijzigingen opgeslagen');
   };
   // --- END NEW Handlers ---
 
   return (
     <div className="revenue-table-container" style={{ padding: '30px' }}>
-      {/* Toggle en Filter Controls */}
-      <div style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        width: "100%",
-        marginBottom: "16px"
-      }}>
-        {/* Weergave toggle */}
-        <div className="flex gap-2">
-          <Button
+      {/* Compacte, elegante header met weergave en berekeningsmethode controls */}
+      {/* Header met consistente knoppen en 5px spacing */}
+      <div className="w-full mb-3 flex flex-wrap items-center p-2">
+        {/* Weergave toggle - consistente knoppen */}
+        <div className="flex mr-[5px]">
+          <button
             type="button"
             id="omzet-toggle"
             onClick={() => setViewMode('revenue')}
-            className={`px-5 py-2 text-sm font-medium rounded ${viewMode === 'revenue' ? 'bg-gray-800 text-white' : 'bg-gray-200 text-gray-800'}`}
+            className={`px-3 py-1 text-xs font-medium rounded-l-md h-7 flex items-center justify-center ${
+              viewMode === 'revenue'
+                ? 'bg-black text-white border border-black'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300 border border-gray-300'
+            }`}
+            style={{ minWidth: '60px' }}
           >
-            Omzet (€)
-          </Button>
-          <Button
+            <span className="flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              €
+            </span>
+          </button>
+          <button
             type="button"
             id="hours-toggle"
             onClick={() => setViewMode('hours')}
-            className={`px-5 py-2 text-sm font-medium rounded ${viewMode === 'hours' ? 'bg-gray-800 text-white' : 'bg-gray-200 text-gray-800'}`}
+            className={`px-3 py-1 text-xs font-medium rounded-r-md h-7 flex items-center justify-center ${
+              viewMode === 'hours'
+                ? 'bg-black text-white border border-black'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300 border border-gray-300'
+            }`}
+            style={{ minWidth: '60px' }}
           >
-            Uren
-          </Button>
+            <span className="flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Uren
+            </span>
+          </button>
         </div>
+
+        {/* Berekeningsmethode toggle knoppen - consistente knoppen */}
+        {viewMode === 'revenue' && (
+          <div className="flex">
+            <button
+              type="button"
+              id="project-max-toggle"
+              onClick={() => setCalculationMode('projectMax')}
+              className={`px-3 py-1 text-xs font-medium rounded-l-md h-7 flex items-center justify-center ${
+                calculationMode === 'projectMax'
+                  ? 'bg-black text-white border border-black'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300 border border-gray-300'
+              }`}
+              style={{ minWidth: '70px' }}
+            >
+              <span className="flex items-center justify-center whitespace-nowrap">
+                {calculationMode === 'projectMax' && (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                )}
+                Project
+              </span>
+            </button>
+            <button
+              type="button"
+              id="line-max-toggle"
+              onClick={() => setCalculationMode('lineMax')}
+              className={`px-3 py-1 text-xs font-medium rounded-r-md h-7 flex items-center justify-center ${
+                calculationMode === 'lineMax'
+                  ? 'bg-black text-white border border-black'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300 border border-gray-300'
+              }`}
+              style={{ minWidth: '70px' }}
+            >
+              <span className="flex items-center justify-center whitespace-nowrap">
+                {calculationMode === 'lineMax' && (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                )}
+                Projectregel
+              </span>
+            </button>
+          </div>
+        )}
+
+        {/* Uitleg - alleen tonen als nodig */}
+        {viewMode === 'revenue' && (
+          <div className="text-xs text-gray-600 ml-auto">
+            <span className="font-medium">
+              {calculationMode === 'projectMax'
+                ? 'Uitleg: Alle uren worden vermenigvuldigd met het uurtarief, ongeacht of de projectregel over budget is.'
+                : 'Uitleg: Uren worden berekend tot de max van elke projectregel. Overspend uren binnen een regel leveren €0 op.'}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Tabel Container */}
@@ -438,6 +626,7 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                   }}>
                     Verschil target/definitief
                   </th>
+                  {/* Lege cel voor verbruikt vorig jaar in KPI rijen - niet tonen */}
                   {months.map(month => {
                     const kpi = kpiData.months.find(k => k.month === month);
                     const diff = kpi?.targetFinalDiff;
@@ -450,7 +639,10 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                         fontWeight: 600,
                         color: diff === undefined ? "#9ca3af" :
                                viewMode === 'hours' ? "#6b7280" :
-                               diff >= 0 ? "#059669" : "#dc2626"
+                               diff >= 0 ? "#059669" : "#dc2626",
+                        width: "80px",
+                        minWidth: "80px",
+                        maxWidth: "80px"
                       }}>
                         {viewMode === 'revenue' ? formatDiff(diff) : "-"}
                       </th>
@@ -480,6 +672,7 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                   }}>
                     Definitieve omzet
                   </th>
+                  {/* Geen lege cel voor verbruikt vorig jaar in deze rij */}
                   {months.map(month => {
                     const kpi = kpiData.months.find(k => k.month === month);
                     const isEditing = editingKpi?.month === month && editingKpi?.field === 'finalRevenue';
@@ -495,29 +688,37 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                           fontWeight: 500,
                           color: viewMode === 'revenue' ? "#0369a1" : "#6b7280",
                           borderBottom: "1px dashed #cbd5e1",
-                          cursor: viewMode === 'revenue' ? "pointer" : "default"
+                          cursor: viewMode === 'revenue' ? "pointer" : "default",
+                          width: "80px",
+                          minWidth: "80px",
+                          maxWidth: "80px"
                         }}
                         title={viewMode === 'revenue' ? "Klik om te bewerken" : ""}
                       >
                         {isEditing ? (
-                          <div className="flex items-center justify-center gap-1">
+                          <div className="flex flex-col items-center gap-1" style={{ position: "fixed", zIndex: 999999, top: "50%", left: "50%", transform: "translate(-50%, -50%)", backgroundColor: "#000", padding: "8px", borderRadius: "8px", boxShadow: "0 0 10px rgba(0,0,0,0.5)" }}>
                             <input
                               type="text"
-                              className="w-20 px-1 py-0.5 text-center border border-blue-300 rounded"
+                              className="w-20 px-1 py-0.5 text-center border border-blue-300 rounded bg-white"
                               value={editValue}
                               onChange={(e) => setEditValue(e.target.value)}
-                              onKeyDown={(e) => e.key === 'Enter' && handleSaveKpi()}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveKpi();
+                                if (e.key === 'Escape') handleCancelEdit();
+                              }}
                               autoFocus
                             />
                             <button
                               onClick={(e) => { e.stopPropagation(); handleSaveKpi(); }}
-                              className="text-green-600 hover:text-green-800 px-1"
+                              className="text-white hover:text-white px-2 py-1 bg-green-600 hover:bg-green-700 border border-green-700 rounded shadow-md"
+                              title="Opslaan"
                             >
                               ✓
                             </button>
                             <button
                               onClick={(e) => { e.stopPropagation(); handleCancelEdit(); }}
-                              className="text-red-600 hover:text-red-800 px-1"
+                              className="text-white hover:text-white px-2 py-1 bg-red-600 hover:bg-red-700 border border-red-700 rounded shadow-md"
+                              title="Annuleren"
                             >
                               ✗
                             </button>
@@ -550,6 +751,7 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                   }}>
                     Verschil target/totaal
                   </th>
+                  {/* Lege cel voor verbruikt vorig jaar in KPI rijen - niet tonen */}
                   {months.map(month => {
                     const kpi = kpiData.months.find(k => k.month === month);
                     const target = kpi?.targetRevenue || 0;
@@ -564,7 +766,10 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                         fontWeight: 600,
                         color: diff === 0 ? "#9ca3af" :
                                viewMode === 'hours' ? "#6b7280" :
-                               diff >= 0 ? "#059669" : "#dc2626"
+                               diff >= 0 ? "#059669" : "#dc2626",
+                        width: "80px",
+                        minWidth: "80px",
+                        maxWidth: "80px"
                       }}>
                         {viewMode === 'revenue' ? formatDiff(diff) : "-"}
                       </th>
@@ -594,6 +799,7 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                   }}>
                     Totale omzet
                   </th>
+                  {/* Geen lege cel voor verbruikt vorig jaar in deze rij */}
                   {months.map(month => (
                     <th key={`total-${month}`} style={{
                       padding: "10px 4px",
@@ -601,7 +807,10 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                       fontSize: "13px",
                       fontWeight: 500,
                       color: viewMode === 'revenue' ? "#0369a1" : "#6b7280",
-                      borderBottom: "1px dashed #cbd5e1"
+                      borderBottom: "1px dashed #cbd5e1",
+                      width: "80px",
+                      minWidth: "80px",
+                      maxWidth: "80px"
                     }}>
                       {viewMode === 'revenue' ? formatNumber(monthlyTotals[month] || 0) : "-"}
                     </th>
@@ -613,7 +822,7 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                     fontWeight: 600,
                     color: viewMode === 'revenue' ? "#0369a1" : "#6b7280"
                   }}>
-                    {viewMode === 'revenue' ? formatNumber(grandTotal) : "-"}
+                    {viewMode === 'revenue' ? formatNumber(monthlyGrandTotal) : "-"}
                   </th>
                 </tr>
 
@@ -628,6 +837,7 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                   }}>
                     Target
                   </th>
+                  {/* Lege cel voor verbruikt vorig jaar in KPI rijen - niet tonen */}
                   {months.map(month => {
                     const kpi = kpiData.months.find(k => k.month === month);
                     const isEditing = editingKpi?.month === month && editingKpi?.field === 'targetRevenue';
@@ -643,29 +853,38 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                           fontWeight: 600,
                           color: viewMode === 'revenue' ? "#0369a1" : "#6b7280",
                           borderBottom: "2px solid #cbd5e1",
-                          cursor: viewMode === 'revenue' ? "pointer" : "default"
+                          cursor: viewMode === 'revenue' ? "pointer" : "default",
+                          width: "80px",
+                          minWidth: "80px",
+                          maxWidth: "80px",
+                          whiteSpace: "normal"
                         }}
                         title={viewMode === 'revenue' ? "Klik om te bewerken" : ""}
                       >
                         {isEditing ? (
-                          <div className="flex items-center justify-center gap-1">
+                          <div className="flex flex-col items-center gap-1" style={{ position: "fixed", zIndex: 999999, top: "50%", left: "50%", transform: "translate(-50%, -50%)", backgroundColor: "#000", padding: "8px", borderRadius: "8px", boxShadow: "0 0 10px rgba(0,0,0,0.5)" }}>
                             <input
                               type="text"
-                              className="w-20 px-1 py-0.5 text-center border border-blue-300 rounded"
+                              className="w-20 px-1 py-0.5 text-center border border-blue-300 rounded bg-white"
                               value={editValue}
                               onChange={(e) => setEditValue(e.target.value)}
-                              onKeyDown={(e) => e.key === 'Enter' && handleSaveKpi()}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveKpi();
+                                if (e.key === 'Escape') handleCancelEdit();
+                              }}
                               autoFocus
                             />
                             <button
                               onClick={(e) => { e.stopPropagation(); handleSaveKpi(); }}
-                              className="text-green-600 hover:text-green-800 px-1"
+                              className="text-white hover:text-white px-2 py-1 bg-green-600 hover:bg-green-700 border border-green-700 rounded shadow-md"
+                              title="Opslaan"
                             >
                               ✓
                             </button>
                             <button
                               onClick={(e) => { e.stopPropagation(); handleCancelEdit(); }}
-                              className="text-red-600 hover:text-red-800 px-1"
+                              className="text-white hover:text-white px-2 py-1 bg-red-600 hover:bg-red-700 border border-red-700 rounded shadow-md"
+                              title="Annuleren"
                             >
                               ✗
                             </button>
@@ -778,26 +997,7 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
               >
                 BUDGET {sortColumn === 'budget' && (sortDirection === 'asc' ? '▲' : '▼')}
               </th>
-              {/* Alleen tonen in omzet-weergave */}
-              {viewMode === 'revenue' && (
-                <th
-                  onClick={() => handleSort('previousYearBudget')}
-                  style={{
-                    padding: "12px 8px",
-                    textAlign: "right",
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    textTransform: "uppercase",
-                    color: "#6b7280",
-                    letterSpacing: "0.05em",
-                    width: "8%",
-                    cursor: "pointer"
-                  }}
-                  title="Klik om te sorteren"
-                >
-                  VERBRUIKT VORIG JAAR {sortColumn === 'previousYearBudget' && (sortDirection === 'asc' ? '▲' : '▼')}
-                </th>
-              )}
+              {/* Verbruikt vorig jaar kolom - verplaatst naar na de maanden */}
               {/* Maanden */}
               {months.map((month, index) => (
                 <th
@@ -811,8 +1011,9 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                     textTransform: "uppercase",
                     color: "#6b7280",
                     letterSpacing: "0.05em",
-                    width: "4%",
-                    minWidth: "60px",
+                    width: "80px",
+                    minWidth: "80px",
+                    maxWidth: "80px",
                     cursor: "pointer"
                   }}
                   title="Klik om te sorteren"
@@ -820,6 +1021,29 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                   {monthNames[index]} {sortColumn === month && (sortDirection === 'asc' ? '▲' : '▼')}
                 </th>
               ))}
+              {/* Verbruikt vorig jaar kolom - na de maanden */}
+              {viewMode === 'revenue' && (
+                <th
+                  onClick={() => handleSort('previousYearBudget')}
+                  style={{
+                    padding: "12px 8px",
+                    textAlign: "right",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    textTransform: "uppercase",
+                    color: "#6b7280",
+                    letterSpacing: "0.05em",
+                    width: "80px",
+                    minWidth: "80px",
+                    maxWidth: "80px",
+                    whiteSpace: "normal",
+                    cursor: "pointer"
+                  }}
+                  title="Klik om te sorteren"
+                >
+                  VORIG JAAR {sortColumn === 'previousYearBudget' && (sortDirection === 'asc' ? '▲' : '▼')}
+                </th>
+              )}
               <th
                 onClick={() => handleSort('total')}
                 style={{
@@ -860,19 +1084,42 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
           </thead>
           <tbody>
             {filteredData.map((entity, idx) => {
-              // Bereken totaal voor deze rij
+              // Bereken totaal voor deze rij (inclusief toekomstige maanden, maar markeer ze)
               const monthlySum = months.reduce(
-                (sum, month) => sum + (viewMode === 'hours'
-                  ? (entity.monthlyHours?.[month] || 0)
-                  : (entity.monthlyRevenue?.[month] || 0)),
+                (sum, month) => {
+                  // Haal de waarde op en controleer of het een geldige numerieke waarde is
+                  const value = viewMode === 'hours'
+                    ? (entity.monthlyHours?.[month] || 0)
+                    : (entity.monthlyRevenue?.[month] || 0);
+
+                  // Log ongewoon hoge uren, maar pas ze niet aan (Gripp data is leidend)
+                  if (viewMode === 'hours' && value > 500) {
+                    console.warn(`[RevenueTable] Unusually high hours detected for entity ${entity.id} (${entity.name}) in month ${month}: ${value}`);
+                  }
+
+
+
+                  return sum + value;
+                },
               0);
 
-              // Include previous year consumption in the total only in revenue view
-              const rowTotal = viewMode === 'revenue'
-                ? monthlySum + (entity.previousYearBudgetUsed || 0)
-                : monthlySum;
+              // Removed check for unusually high hours for a single project
+              const hasUnusuallyHighHours = false;
 
-              // Calculate remaining based on total including previous year consumption
+              // Check if this project has hours in future months
+              const hasFutureMonthsWithHours = months.some(month => {
+                const [yearStr, monthStr] = month.split('-');
+                const monthDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1);
+                const currentDate = new Date();
+                const isMonthInFuture = monthDate > currentDate;
+                const value = viewMode === 'hours' ? (entity.monthlyHours?.[month] || 0) : (entity.monthlyRevenue?.[month] || 0);
+                return isMonthInFuture && value > 0;
+              });
+
+              // Include previous year consumption in the total only in revenue view
+              const rowTotal = monthlySum;
+
+              // Calculate remaining based on total (verbruik vorig jaar is al opgenomen in rowTotal)
               const entityRemaining = entity.type === 'Vaste prijs'
                 ? ((entity.totalexclvat || 0) - rowTotal)
                 : entity.remainingBudget;
@@ -959,7 +1206,104 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                       : '-'}
                   </td>
 
-                  {/* Verbruikt budget vorig jaar - Alleen tonen in omzet-weergave */}
+                  {/* Verbruikt budget vorig jaar - verplaatst naar na de maanden */}
+
+                  {/* Maandelijkse waardes */}
+                  {months.map(month => {
+                    // Check if the month is in the future
+                    const isMonthInFuture = () => {
+                      const currentDate = new Date();
+                      const [yearStr, monthStr] = month.split('-');
+                      const monthDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1);
+                      return monthDate > currentDate;
+                    };
+
+                    // Get the value (don't filter future months, just flag them)
+                    const value = viewMode === 'hours'
+                      ? entity.monthlyHours?.[month] || 0
+                      : entity.monthlyRevenue?.[month] || 0;
+
+                    // Log ongewoon hoge uren, maar pas ze niet aan (Gripp data is leidend)
+                    if (viewMode === 'hours' && value > 100) {
+                      console.warn(`[RevenueTable] Unusually high hours detected for entity ${entity.id} (${entity.name}) in month ${month}: ${value}`);
+
+                      // Log extra details voor debugging
+                      console.log(`[RevenueTable DEBUG] Entity details:`, {
+                        id: entity.id,
+                        name: entity.name,
+                        companyName: entity.companyName,
+                        herkomst: entity.herkomst,
+                        type: entity.type,
+                        displayType: entity.displayType,
+                        monthlyHours: entity.monthlyHours?.[month],
+                        monthlyRevenue: entity.monthlyRevenue?.[month]
+                      });
+
+                      // Controleer of de naam een Gripp ID bevat tussen haakjes
+                      const grippIdMatch = entity.name.match(/\((\d+)\)$/);
+                      if (grippIdMatch && grippIdMatch[1]) {
+                        const grippId = parseInt(grippIdMatch[1]);
+                        console.log(`[RevenueTable DEBUG] Entity ${entity.id} has Gripp ID ${grippId} in its name`);
+                      }
+                    }
+
+                    // Removed check for unusually high hours in a single month
+                    const hasUnusuallyHighMonthlyHours = false;
+
+                    // Flag hours in future months
+                    const hasFutureHours = isMonthInFuture() && value > 0;
+
+                    // Check if this month has over-budget lines (show in both calculation modes)
+                    const hasOverBudgetLine = viewMode === 'revenue' && entity.overBudgetMonths?.[month] === true;
+
+                    // Debug logging to check if overBudgetMonths is being set correctly
+                    // Log all entities with overBudgetMonths set to true
+                    if (entity.overBudgetMonths?.[month] === true) {
+                      console.log(`[OVER BUDGET] Entity ${entity.id} (${entity.name}), Month ${month}, hasOverBudgetLine:`, hasOverBudgetLine);
+                    }
+
+                    return (
+                      <td key={month} style={{
+                        padding: "12px 4px",
+                        fontSize: "14px",
+                        textAlign: "center",
+                        position: "relative", // For positioning the indicator
+                        width: "80px",
+                        minWidth: "80px",
+                        maxWidth: "80px"
+                      }}>
+                        {value !== 0 ? (
+                          <div className="relative inline-block">
+                            <span style={{ fontWeight: 500, color: hasUnusuallyHighMonthlyHours ? "#ef4444" : "#111827" }}>
+                              {formatNumber(value)}
+                            </span>
+                            {/* Red dot indicator for over-budget lines */}
+                            {hasOverBudgetLine && (
+                              <div className="absolute top-0 right-0 transform translate-x-1/2 -translate-y-1/2">
+                                <span
+                                  className="flex items-center justify-center w-6 h-6 bg-red-600 rounded-full border-2 border-white shadow-lg animate-pulse"
+                                  title="Deze maand bevat uren op projectregels die over budget zijn"
+                                >
+                                  <span className="text-white text-xs font-bold">!</span>
+                                </span>
+                              </div>
+                            )}
+                            {/* Warning for unusually high hours - removed */}
+                            {/* Warning for hours in future months */}
+                            {hasFutureHours && (
+                              <div className="text-xs text-orange-600 font-normal absolute -top-4 left-0 right-0 text-center">
+                                Toekomstige uren
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span style={{ color: "#9ca3af" }}>-</span>
+                        )}
+                      </td>
+                    );
+                  })}
+
+                  {/* Verbruikt budget vorig jaar - na de maanden */}
                   {viewMode === 'revenue' && (
                     <td
                       style={{
@@ -968,28 +1312,48 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                         fontWeight: 500,
                         textAlign: "right",
                         color: "#374151",
-                        cursor: "pointer" // Add cursor pointer
+                        cursor: "pointer", // Add cursor pointer
+                        width: "80px",
+                        minWidth: "80px",
+                        maxWidth: "80px",
+                        whiteSpace: "normal",
+                        position: "relative" // Add position relative
                       }}
                       onClick={() => !isEditingConsumption && handleEditConsumption(entity)} // Enable editing on click
                       title="Klik om te bewerken"
                     >
                       {isEditingConsumption ? (
-                        <div className="flex items-center justify-end gap-1">
-                          <input
-                            type="text"
-                            className="w-20 px-1 py-0.5 text-right border border-blue-300 rounded" // Align text right
-                            value={consumptionEditValue}
-                            onChange={(e) => setConsumptionEditValue(e.target.value)}
-                            onBlur={handleSaveConsumption} // Save on blur
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleSaveConsumption();
-                              if (e.key === 'Escape') handleCancelConsumptionEdit();
-                            }}
-                            autoFocus
-                          />
-                          {/* Optional: Add save/cancel buttons if needed */}
-                          {/* <button onClick={handleSaveConsumption} className="text-green-600">✓</button> */}
-                          {/* <button onClick={handleCancelConsumptionEdit} className="text-red-600">✗</button> */}
+                        <div className="flex flex-col items-end gap-1" style={{ position: "fixed", zIndex: 99999, top: "50%", left: "50%", transform: "translate(-50%, -50%)", backgroundColor: "#000", padding: "8px", borderRadius: "8px", boxShadow: "0 0 10px rgba(0,0,0,0.5)" }}>
+                          <div className="flex items-center justify-end gap-1">
+                            <input
+                              type="text"
+                              className="w-20 px-1 py-0.5 text-right border border-blue-300 rounded bg-white" // Align text right
+                              value={consumptionEditValue}
+                              onChange={(e) => setConsumptionEditValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveConsumption();
+                                if (e.key === 'Escape') handleCancelConsumptionEdit();
+                              }}
+                              autoFocus
+                            />
+                          </div>
+                          {/* Add explicit save/cancel buttons in a separate row */}
+                          <div className="flex items-center justify-end gap-1 mt-1" style={{ position: "relative", zIndex: 100000 }}>
+                            <button
+                              onClick={handleSaveConsumption}
+                              className="text-white hover:text-white px-2 py-1 bg-green-600 hover:bg-green-700 border border-green-700 rounded shadow-md"
+                              title="Opslaan"
+                            >
+                              ✓
+                            </button>
+                            <button
+                              onClick={handleCancelConsumptionEdit}
+                              className="text-white hover:text-white px-2 py-1 bg-red-600 hover:bg-red-700 border border-red-700 rounded shadow-md"
+                              title="Annuleren"
+                            >
+                              ✗
+                            </button>
+                          </div>
                         </div>
                       ) : (
                         formatNumber(entity.previousYearBudgetUsed)
@@ -997,38 +1361,23 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                     </td>
                   )}
 
-                  {/* Maandelijkse waardes */}
-                  {months.map(month => {
-                    const value = viewMode === 'hours'
-                      ? entity.monthlyHours?.[month] || 0
-                      : entity.monthlyRevenue?.[month] || 0;
-
-                    return (
-                      <td key={month} style={{
-                        padding: "12px 4px",
-                        fontSize: "14px",
-                        textAlign: "center"
-                      }}>
-                        {value !== 0 ? (
-                          <span style={{ fontWeight: 500, color: "#111827" }}>
-                            {formatNumber(value)}
-                          </span>
-                        ) : (
-                          <span style={{ color: "#9ca3af" }}>-</span>
-                        )}
-                      </td>
-                    );
-                  })}
-
                   {/* Totaal voor de rij */}
                   <td style={{
                     padding: "12px 8px",
                     fontSize: "14px",
                     fontWeight: 500,
                     textAlign: "right",
-                    color: "#111827",
-                    backgroundColor: "#f3f4f6"
-                  }}>{formatNumber(rowTotal)}</td>
+                    color: hasUnusuallyHighHours || hasFutureMonthsWithHours ? "#ef4444" : "#111827",
+                    backgroundColor: hasUnusuallyHighHours ? "#fee2e2" : hasFutureMonthsWithHours ? "#fff3e0" : "#f3f4f6"
+                  }}>
+                    {formatNumber(rowTotal)}
+                    {/* Warning for unusually high hours - removed */}
+                    {hasFutureMonthsWithHours && (
+                      <div className="text-xs text-orange-600 font-normal">
+                        Bevat toekomstige uren
+                      </div>
+                    )}
+                  </td>
 
                   {/* Restant voor de rij */}
                   <td style={{
@@ -1063,29 +1412,36 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                 fontWeight: 600,
                 color: "#4b5563"
               }}>TOTAAL</td>
-              {/* Previous Year Consumption Total - Alleen tonen in omzet-weergave */}
-              {viewMode === 'revenue' && (
-                <td style={{
-                  padding: "12px 8px",
-                  fontSize: "14px",
-                  fontWeight: 600,
-                  textAlign: "right",
-                  color: "#4b5563"
-                }}>
-                  {formatNumber(totalPreviousYearConsumption)}
-                </td>
-              )}
               {months.map(month => (
                 <td key={month} style={{
                   padding: "12px 4px",
                   fontSize: "14px",
                   fontWeight: 600,
                   textAlign: "center",
-                  color: "#4b5563"
+                  color: "#4b5563",
+                  width: "80px",
+                  minWidth: "80px",
+                  maxWidth: "80px"
                 }}>
                   {formatNumber(monthlyTotals[month] || 0)}
                 </td>
               ))}
+              {/* Previous Year Consumption Total - na de maanden */}
+              {viewMode === 'revenue' && (
+                <td style={{
+                  padding: "12px 8px",
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  textAlign: "right",
+                  color: "#4b5563",
+                  width: "80px",
+                  minWidth: "80px",
+                  maxWidth: "80px",
+                  whiteSpace: "normal"
+                }}>
+                  {formatNumber(totalPreviousYearConsumption)}
+                </td>
+              )}
               <td style={{
                 padding: "12px 8px",
                 fontSize: "14px",
@@ -1093,7 +1449,7 @@ const RevenueTable: React.FC<RevenueTableProps> = ({ data, year, kpiData, onKpiU
                 textAlign: "right",
                 color: "#1f2937",
                 backgroundColor: "#e5e7eb"
-              }}>{formatNumber(grandTotal)}</td>
+              }}>{formatNumber(monthlyGrandTotal)}</td>
               <td style={{
                 padding: "12px 8px",
                 fontSize: "14px",
